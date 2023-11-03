@@ -10,15 +10,6 @@
 
 #define N_CLP_MENSAGENS 2
 
-
-/* ---------------------------------------  Declaracao das Funcoes ----------------------------------------- */
-DWORD WINAPI Thread_CLP_Mensagens(int index);
-DWORD WINAPI Thread_CLP_Monitoracao();
-DWORD WINAPI Thread_Retirada_Mensagens();
-
-int encode_msg(mensagem_t * dados, char * msg);
-int pad_zeros(int n, int size, char * dest);
-
 /* --------------------------------------- Definicoes Mensagens ----------------------------------------- */
 
 #define DELIMITADOR_CAMPO ";"
@@ -43,6 +34,7 @@ typedef struct {
 	SYSTEMTIME timestamp; //Horas da mensagem
 } mensagem_t;
 
+int nseq_msg=0;
 
 /* ------------------------------------ Estrutura para os eventos -------------------------------------- */
 
@@ -58,6 +50,13 @@ HANDLE Tecla_Esc;
 
 typedef unsigned (WINAPI* CAST_FUNCTION)(LPVOID);	
 typedef unsigned* CAST_LPDWORD;
+
+/* ---------------------------------------  Declaracao das Funcoes ----------------------------------------- */
+DWORD WINAPI Thread_CLP_Mensagens(int index);
+DWORD WINAPI Thread_CLP_Monitoracao();
+DWORD WINAPI Thread_Retirada_Mensagens();
+
+int encode_msg(mensagem_t * dados, char * msg);
 
 /* --------------------------------------- Funcao Main ----------------------------------------- */
 
@@ -130,6 +129,8 @@ int main()
 DWORD WINAPI Thread_CLP_Mensagens(int index)
 {
     DWORD Retorno;
+    mensagem_t msg;
+    char msg_str[MSG_TAM_TOT+1];
     HANDLE eventos[2]; 
     int evento_atual = -1;
 
@@ -152,6 +153,19 @@ DWORD WINAPI Thread_CLP_Mensagens(int index)
         {
             break;
         }
+
+        msg.nseq = nseq_msg++;
+        msg.id = index+1;
+        msg.diag = rand()%99;
+        msg.pressao_interna = (msg.diag == 55) ? 0 : (rand()%99999 / 10.0);
+        msg.pressao_injecao = (msg.diag == 55) ? 0 : (rand()%99999 / 10.0);
+        msg.temp = (msg.diag == 55) ? 0 : (rand()%99999 / 10.0);
+        GetSystemTime(&msg.timestamp);
+
+        encode_msg(&msg, msg_str);
+        printf("Mensagem Gerada: %s\n", msg);
+
+        Sleep(1+rand()%4);
 
 	}while (evento_atual != 0);
     
@@ -228,50 +242,52 @@ int encode_msg(mensagem_t * dados, char * msg){
 
     snprintf(string_formato, 20, "%%0%dd", NSEQ_TAM);
     snprintf(string_dado, 20, string_formato, dados->nseq);
-    strncpy(&msg[pos_atual], string_dado, NSEQ_TAM);
+    strncpy_s(&msg[pos_atual], MSG_TAM_TOT+1, string_dado, NSEQ_TAM);
     pos_atual+= NSEQ_TAM;
-    strncpy(&msg[pos_atual], DELIMITADOR_CAMPO, 1);
+    strncpy_s(&msg[pos_atual], MSG_TAM_TOT+1, DELIMITADOR_CAMPO, 1);
     pos_atual++;
 
     snprintf(string_formato, 20, "%%0%dd", ID_TAM);
     snprintf(string_dado, 20, string_formato, dados->nseq);
-    strncpy(&msg[pos_atual], string_dado, ID_TAM);
+    strncpy_s(&msg[pos_atual], MSG_TAM_TOT+1, string_dado, ID_TAM);
     pos_atual+= ID_TAM;
-    strncpy(&msg[pos_atual], DELIMITADOR_CAMPO, 1);
+    strncpy_s(&msg[pos_atual], MSG_TAM_TOT+1, DELIMITADOR_CAMPO, 1);
     pos_atual++;
 
     snprintf(string_formato, 20, "%%0%dd", DIAG_TAM);
     snprintf(string_dado, 20, string_formato, dados->diag);
-    strncpy(&msg[pos_atual], string_dado, DIAG_TAM);
+    strncpy_s(&msg[pos_atual], MSG_TAM_TOT+1, string_dado, DIAG_TAM);
     pos_atual+= DIAG_TAM;
-    strncpy(&msg[pos_atual], DELIMITADOR_CAMPO, 1);
+    strncpy_s(&msg[pos_atual], MSG_TAM_TOT+1, DELIMITADOR_CAMPO, 1);
     pos_atual++;
 
     snprintf(string_formato, 20, "%%0%d.1f", PRES_INTERNA_TAM);
     snprintf(string_dado, 20, string_formato, dados->pressao_interna);
-    strncpy(&msg[pos_atual], string_dado, PRES_INTERNA_TAM);
+    strncpy_s(&msg[pos_atual], MSG_TAM_TOT+1, string_dado, PRES_INTERNA_TAM);
     pos_atual+= PRES_INTERNA_TAM;
-    strncpy(&msg[pos_atual], DELIMITADOR_CAMPO, 1);
+    strncpy_s(&msg[pos_atual], MSG_TAM_TOT+1, DELIMITADOR_CAMPO, 1);
     pos_atual++;
 
     snprintf(string_formato, 20, "%%0%d.1f", PRES_INJECAO_TAM);
     snprintf(string_dado, 20, string_formato, dados->pressao_injecao);
-    strncpy(&msg[pos_atual], string_dado, PRES_INJECAO_TAM);
+    strncpy_s(&msg[pos_atual], MSG_TAM_TOT+1, string_dado, PRES_INJECAO_TAM);
     pos_atual+= PRES_INJECAO_TAM;
-    strncpy(&msg[pos_atual], DELIMITADOR_CAMPO, 1);
+    strncpy_s(&msg[pos_atual], MSG_TAM_TOT+1, DELIMITADOR_CAMPO, 1);
     pos_atual++;
 
     snprintf(string_formato, 20, "%%0%d.1f", TEMP_TAM);
     snprintf(string_dado, 20, string_formato, dados->temp);
-    strncpy(&msg[pos_atual], string_dado, TEMP_TAM);
+    strncpy_s(&msg[pos_atual], MSG_TAM_TOT+1, string_dado, TEMP_TAM);
     pos_atual+= TEMP_TAM;
-    strncpy(&msg[pos_atual], DELIMITADOR_CAMPO, 1);
+    strncpy_s(&msg[pos_atual], MSG_TAM_TOT+1, DELIMITADOR_CAMPO, 1);
     pos_atual++;
 
     snprintf(string_formato, 20, "%02d:%02d:%02d");
     snprintf(string_dado, 20, string_formato, dados->timestamp.wHour, dados->timestamp.wMinute, dados->timestamp.wSecond);
-    strncpy(&msg[pos_atual], string_dado, TIMESTAMP_TAM);
+    strncpy_s(&msg[pos_atual], MSG_TAM_TOT+1, string_dado, TIMESTAMP_TAM);
     pos_atual+= TIMESTAMP_TAM;
+
+    msg[pos_atual] = '\0';
 
     return 1;
 }
