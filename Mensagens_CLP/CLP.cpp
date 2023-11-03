@@ -10,26 +10,56 @@
 
 #define N_CLP_MENSAGENS 2
 
-HANDLE ThreadsCLP[N_CLP_MENSAGENS+1];
+
+/* ---------------------------------------  Declaracao das Funcoes ----------------------------------------- */
 DWORD WINAPI Thread_CLP_Mensagens(int index);
 DWORD WINAPI Thread_CLP_Monitoracao();
 DWORD WINAPI Thread_Retirada_Mensagens();
 
+int encode_msg(mensagem_t * dados, char * msg);
+int pad_zeros(int n, int size, char * dest);
 
-int Retorno = 0;
+/* --------------------------------------- Definicoes Mensagens ----------------------------------------- */
 
+#define DELIMITADOR_CAMPO ";"
+#define DIAG_FALHA 55
+
+#define MSG_TAM_TOT 40
+#define NSEQ_TAM 5
+#define ID_TAM 1
+#define DIAG_TAM 2
+#define PRES_INTERNA_TAM 6
+#define PRES_INJECAO_TAM 6
+#define TEMP_TAM 6
+#define TIMESTAMP_TAM 8
+
+typedef struct {
+    int nseq; //N�mero sequencial da mensagem
+	int id; //Identifica��o do CLP
+	int diag; //Diagn�stico dos cart�es do CLP
+	float pressao_interna; //Press�o interna na panela de gusa
+	float pressao_injecao; //Press�o de inje��o do nitrog�nio
+	float temp; //Temperatura na panela
+	SYSTEMTIME timestamp; //Horas da mensagem
+} mensagem_t;
+
+
+/* ------------------------------------ Estrutura para os eventos -------------------------------------- */
+
+HANDLE ThreadsCLP[N_CLP_MENSAGENS+1];
 enum {
     INDEX_CLP_MENSAGENS = N_CLP_MENSAGENS-1,
     INDEX_CLP_MONITORACAO,
     INDEX_RETIRADA
 };
-
 HANDLE Tecla_Esc;
 
-int evento_atual = 0;
+/* --------------------------------------- Definicoes de casting ----------------------------------------- */
 
 typedef unsigned (WINAPI* CAST_FUNCTION)(LPVOID);	
 typedef unsigned* CAST_LPDWORD;
+
+/* --------------------------------------- Funcao Main ----------------------------------------- */
 
 int main()
 {
@@ -94,6 +124,8 @@ int main()
     
 
 }
+
+/* --------------------------------------- Threads ----------------------------------------- */
 
 DWORD WINAPI Thread_CLP_Mensagens(int index)
 {
@@ -188,3 +220,58 @@ DWORD WINAPI Thread_Retirada_Mensagens(){
     return(0);
 }
 
+/* --------------------------------------- Funcoes Auxiliares ----------------------------------------- */
+
+int encode_msg(mensagem_t * dados, char * msg){
+    char string_formato[20], string_dado[20];
+    int pos_atual=0;
+
+    snprintf(string_formato, 20, "%%0%dd", NSEQ_TAM);
+    snprintf(string_dado, 20, string_formato, dados->nseq);
+    strncpy(&msg[pos_atual], string_dado, NSEQ_TAM);
+    pos_atual+= NSEQ_TAM;
+    strncpy(&msg[pos_atual], DELIMITADOR_CAMPO, 1);
+    pos_atual++;
+
+    snprintf(string_formato, 20, "%%0%dd", ID_TAM);
+    snprintf(string_dado, 20, string_formato, dados->nseq);
+    strncpy(&msg[pos_atual], string_dado, ID_TAM);
+    pos_atual+= ID_TAM;
+    strncpy(&msg[pos_atual], DELIMITADOR_CAMPO, 1);
+    pos_atual++;
+
+    snprintf(string_formato, 20, "%%0%dd", DIAG_TAM);
+    snprintf(string_dado, 20, string_formato, dados->diag);
+    strncpy(&msg[pos_atual], string_dado, DIAG_TAM);
+    pos_atual+= DIAG_TAM;
+    strncpy(&msg[pos_atual], DELIMITADOR_CAMPO, 1);
+    pos_atual++;
+
+    snprintf(string_formato, 20, "%%0%d.1f", PRES_INTERNA_TAM);
+    snprintf(string_dado, 20, string_formato, dados->pressao_interna);
+    strncpy(&msg[pos_atual], string_dado, PRES_INTERNA_TAM);
+    pos_atual+= PRES_INTERNA_TAM;
+    strncpy(&msg[pos_atual], DELIMITADOR_CAMPO, 1);
+    pos_atual++;
+
+    snprintf(string_formato, 20, "%%0%d.1f", PRES_INJECAO_TAM);
+    snprintf(string_dado, 20, string_formato, dados->pressao_injecao);
+    strncpy(&msg[pos_atual], string_dado, PRES_INJECAO_TAM);
+    pos_atual+= PRES_INJECAO_TAM;
+    strncpy(&msg[pos_atual], DELIMITADOR_CAMPO, 1);
+    pos_atual++;
+
+    snprintf(string_formato, 20, "%%0%d.1f", TEMP_TAM);
+    snprintf(string_dado, 20, string_formato, dados->temp);
+    strncpy(&msg[pos_atual], string_dado, TEMP_TAM);
+    pos_atual+= TEMP_TAM;
+    strncpy(&msg[pos_atual], DELIMITADOR_CAMPO, 1);
+    pos_atual++;
+
+    snprintf(string_formato, 20, "%02d:%02d:%02d");
+    snprintf(string_dado, 20, string_formato, dados->timestamp.wHour, dados->timestamp.wMinute, dados->timestamp.wSecond);
+    strncpy(&msg[pos_atual], string_dado, TIMESTAMP_TAM);
+    pos_atual+= TIMESTAMP_TAM;
+
+    return 1;
+}
