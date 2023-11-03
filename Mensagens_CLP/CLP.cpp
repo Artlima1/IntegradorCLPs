@@ -14,16 +14,18 @@
 /* --------------------------------------- Definicoes Mensagens ----------------------------------------- */
 
 #define DELIMITADOR_CAMPO ";"
+#define NSEQ_MAX 99999
+
 #define DIAG_FALHA 55
 
 #define MSG_TAM_TOT 40
-#define NSEQ_TAM 5
-#define ID_TAM 1
-#define DIAG_TAM 2
-#define PRES_INTERNA_TAM 6
-#define PRES_INJECAO_TAM 6
-#define TEMP_TAM 6
-#define TIMESTAMP_TAM 8
+#define MSG_NSEQ_TAM 5
+#define MSG_ID_TAM 1
+#define MSG_DIAG_TAM 2
+#define MSG_PRES_INTERNA_TAM 6
+#define MSG_PRES_INJECAO_TAM 6
+#define MSG_TEMP_TAM 6
+#define MSG_TIMESTAMP_TAM 8
 
 typedef struct {
     int nseq;               // N�mero sequencial da mensagem
@@ -37,6 +39,32 @@ typedef struct {
 
 int nseq_msg = 0;
 HANDLE hMutex_nseq_msg;
+
+#define ALARME_TAM_TOT 17
+#define ALARME_NSEQ_TAM 5
+#define ALARME_ID_TAM 2
+#define ALARME_TIMESTAMP_TAM 8
+
+typedef struct {
+    int nseq;                   // N�mero sequencial da mensagem
+    char id[ALARME_ID_TAM+1];   // Identifica��o do CLP
+    SYSTEMTIME timestamp;       // Horas da mensagem
+} alarme_t;
+
+int nseq_alarme = 0;
+
+#define N_ALARMES 3
+
+typedef struct {
+    char id[ALARME_ID_TAM + 1];
+    char descricao[50];
+} alarme_code_t;
+
+alarme_code_t lista_alarmes[N_ALARMES] = {
+    {"A2", "Esteira Parou"},
+    {"C8", "Ferro nao esquentando"},
+    {"Z9", "Rebeliao das maquinas"},
+};
 
 /* ------------------------------------ Estrutura para os eventos -------------------------------------- */
 
@@ -58,6 +86,7 @@ DWORD WINAPI Thread_CLP_Monitoracao();
 DWORD WINAPI Thread_Retirada_Mensagens();
 
 int encode_msg(mensagem_t* dados, char* msg);
+int encode_alarme(alarme_t* dados, char* alarme);
 
 /* --------------------------------------- Funcao Main ----------------------------------------- */
 
@@ -147,7 +176,7 @@ DWORD WINAPI Thread_CLP_Mensagens(int index) {
         }
 
         msg.nseq = nseq_msg++;
-        if(nseq_msg > 99999) nseq_msg = 0;
+        if(nseq_msg > NSEQ_MAX) nseq_msg = 0;
         ReleaseMutex(hMutex_nseq_msg);
 
         msg.id = index + 1;
@@ -171,8 +200,12 @@ DWORD WINAPI Thread_CLP_Mensagens(int index) {
 }
 
 DWORD WINAPI Thread_CLP_Monitoracao() {
+    srand(GetCurrentThreadId());
     DWORD Retorno;
     int evento_atual = -1;
+    alarme_t alarme;
+    char alarme_str[ALARME_TAM_TOT+1];
+    
     HANDLE eventos[2];
     eventos[0] = OpenEvent(EVENT_ALL_ACCESS, FALSE, "Esc");
     if (eventos[0] == NULL) {
@@ -186,10 +219,20 @@ DWORD WINAPI Thread_CLP_Monitoracao() {
     do {
         Retorno = WaitForMultipleObjects(2, eventos, FALSE, INFINITE);
         evento_atual = Retorno - WAIT_OBJECT_0;
-        printf("Monitoracao \n");
         if (evento_atual == 0) {
             break;
         }
+
+        alarme.nseq = nseq_alarme++;
+        if(nseq_msg > NSEQ_MAX) nseq_alarme = 0;
+
+        strcpy_s(alarme.id, ALARME_ID_TAM+1, lista_alarmes[rand()%N_ALARMES].id);
+        GetLocalTime(&alarme.timestamp);
+
+        encode_alarme(&alarme, alarme_str);
+        printf("Alarme Gerado: %s\n", alarme_str);
+
+        Sleep(1000 + (rand() % 4000));
 
     } while (evento_atual != 0);
 
@@ -235,54 +278,80 @@ int encode_msg(mensagem_t* dados, char* msg) {
     char string_formato[20], string_dado[20];
     int pos_atual = 0;
 
-    snprintf(string_formato, 20, "%%0%dd", NSEQ_TAM);
+    snprintf(string_formato, 20, "%%0%dd", MSG_NSEQ_TAM);
     snprintf(string_dado, 20, string_formato, dados->nseq);
-    strncpy_s(&msg[pos_atual], MSG_TAM_TOT + 1, string_dado, NSEQ_TAM);
-    pos_atual += NSEQ_TAM;
+    strncpy_s(&msg[pos_atual], MSG_TAM_TOT + 1, string_dado, MSG_NSEQ_TAM);
+    pos_atual += MSG_NSEQ_TAM;
     strncpy_s(&msg[pos_atual], MSG_TAM_TOT + 1, DELIMITADOR_CAMPO, 1);
     pos_atual++;
 
-    snprintf(string_formato, 20, "%%0%dd", ID_TAM);
+    snprintf(string_formato, 20, "%%0%dd", MSG_ID_TAM);
     snprintf(string_dado, 20, string_formato, dados->id);
-    strncpy_s(&msg[pos_atual], MSG_TAM_TOT + 1, string_dado, ID_TAM);
-    pos_atual += ID_TAM;
+    strncpy_s(&msg[pos_atual], MSG_TAM_TOT + 1, string_dado, MSG_ID_TAM);
+    pos_atual += MSG_ID_TAM;
     strncpy_s(&msg[pos_atual], MSG_TAM_TOT + 1, DELIMITADOR_CAMPO, 1);
     pos_atual++;
 
-    snprintf(string_formato, 20, "%%0%dd", DIAG_TAM);
+    snprintf(string_formato, 20, "%%0%dd", MSG_DIAG_TAM);
     snprintf(string_dado, 20, string_formato, dados->diag);
-    strncpy_s(&msg[pos_atual], MSG_TAM_TOT + 1, string_dado, DIAG_TAM);
-    pos_atual += DIAG_TAM;
+    strncpy_s(&msg[pos_atual], MSG_TAM_TOT + 1, string_dado, MSG_DIAG_TAM);
+    pos_atual += MSG_DIAG_TAM;
     strncpy_s(&msg[pos_atual], MSG_TAM_TOT + 1, DELIMITADOR_CAMPO, 1);
     pos_atual++;
 
-    snprintf(string_formato, 20, "%%0%d.1f", PRES_INTERNA_TAM);
+    snprintf(string_formato, 20, "%%0%d.1f", MSG_PRES_INTERNA_TAM);
     snprintf(string_dado, 20, string_formato, dados->pressao_interna);
-    strncpy_s(&msg[pos_atual], MSG_TAM_TOT + 1, string_dado, PRES_INTERNA_TAM);
-    pos_atual += PRES_INTERNA_TAM;
+    strncpy_s(&msg[pos_atual], MSG_TAM_TOT + 1, string_dado, MSG_PRES_INTERNA_TAM);
+    pos_atual += MSG_PRES_INTERNA_TAM;
     strncpy_s(&msg[pos_atual], MSG_TAM_TOT + 1, DELIMITADOR_CAMPO, 1);
     pos_atual++;
 
-    snprintf(string_formato, 20, "%%0%d.1f", PRES_INJECAO_TAM);
+    snprintf(string_formato, 20, "%%0%d.1f", MSG_PRES_INJECAO_TAM);
     snprintf(string_dado, 20, string_formato, dados->pressao_injecao);
-    strncpy_s(&msg[pos_atual], MSG_TAM_TOT + 1, string_dado, PRES_INJECAO_TAM);
-    pos_atual += PRES_INJECAO_TAM;
+    strncpy_s(&msg[pos_atual], MSG_TAM_TOT + 1, string_dado, MSG_PRES_INJECAO_TAM);
+    pos_atual += MSG_PRES_INJECAO_TAM;
     strncpy_s(&msg[pos_atual], MSG_TAM_TOT + 1, DELIMITADOR_CAMPO, 1);
     pos_atual++;
 
-    snprintf(string_formato, 20, "%%0%d.1f", TEMP_TAM);
+    snprintf(string_formato, 20, "%%0%d.1f", MSG_TEMP_TAM);
     snprintf(string_dado, 20, string_formato, dados->temp);
-    strncpy_s(&msg[pos_atual], MSG_TAM_TOT + 1, string_dado, TEMP_TAM);
-    pos_atual += TEMP_TAM;
+    strncpy_s(&msg[pos_atual], MSG_TAM_TOT + 1, string_dado, MSG_TEMP_TAM);
+    pos_atual += MSG_TEMP_TAM;
     strncpy_s(&msg[pos_atual], MSG_TAM_TOT + 1, DELIMITADOR_CAMPO, 1);
     pos_atual++;
 
     snprintf(string_formato, 20, "%%02d:%%02d:%%02d");
     snprintf(string_dado, 20, string_formato, dados->timestamp.wHour, dados->timestamp.wMinute, dados->timestamp.wSecond);
-    strncpy_s(&msg[pos_atual], MSG_TAM_TOT + 1, string_dado, TIMESTAMP_TAM);
-    pos_atual += TIMESTAMP_TAM;
+    strncpy_s(&msg[pos_atual], MSG_TAM_TOT + 1, string_dado, MSG_TIMESTAMP_TAM);
+    pos_atual += MSG_TIMESTAMP_TAM;
 
     msg[pos_atual] = '\0';
+
+    return 1;
+}
+
+int encode_alarme(alarme_t* dados, char* alarme){
+    char string_formato[20], string_dado[20];
+    int pos_atual = 0;
+
+    snprintf(string_formato, 20, "%%0%dd", ALARME_NSEQ_TAM);
+    snprintf(string_dado, 20, string_formato, dados->nseq);
+    strncpy_s(&alarme[pos_atual], ALARME_TAM_TOT + 1, string_dado, ALARME_NSEQ_TAM);
+    pos_atual += ALARME_NSEQ_TAM;
+    strncpy_s(&alarme[pos_atual], ALARME_TAM_TOT + 1, DELIMITADOR_CAMPO, 1);
+    pos_atual++;
+
+    strncpy_s(&alarme[pos_atual], ALARME_TAM_TOT + 1, dados->id, ALARME_ID_TAM);
+    pos_atual += ALARME_ID_TAM;
+    strncpy_s(&alarme[pos_atual], ALARME_TAM_TOT + 1, DELIMITADOR_CAMPO, 1);
+    pos_atual++;
+
+    snprintf(string_formato, 20, "%%02d:%%02d:%%02d");
+    snprintf(string_dado, 20, string_formato, dados->timestamp.wHour, dados->timestamp.wMinute, dados->timestamp.wSecond);
+    strncpy_s(&alarme[pos_atual], ALARME_TAM_TOT + 1, string_dado, ALARME_TIMESTAMP_TAM);
+    pos_atual += ALARME_TIMESTAMP_TAM;
+
+    alarme[pos_atual] = '\0';
 
     return 1;
 }
