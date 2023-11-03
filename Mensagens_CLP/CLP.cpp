@@ -44,7 +44,6 @@ enum {
     INDEX_CLP_MONITORACAO,
     INDEX_RETIRADA
 };
-HANDLE Tecla_Esc;
 
 /* --------------------------------------- Definicoes de casting ----------------------------------------- */
 
@@ -64,12 +63,6 @@ int main()
 {
     DWORD Retorno;
     DWORD ThreadID;
-
-    Tecla_Esc = OpenEvent(EVENT_ALL_ACCESS, FALSE, "Esc");
-	if (Tecla_Esc == NULL)
-	{
-		printf("ERROR : %d", GetLastError());
-	}
 
     for(int i = 0; i < N_CLP_MENSAGENS; i++){
         ThreadsCLP[i] = (HANDLE)_beginthreadex(NULL, 0, (CAST_FUNCTION)Thread_CLP_Mensagens, (LPVOID)(INT_PTR)i, 0, (CAST_LPDWORD)&ThreadID);
@@ -117,7 +110,6 @@ int main()
     {
         CloseHandle(ThreadsCLP[i]);
     }
-    CloseHandle(Tecla_Esc);
     printf("Finalizando Processos CLPs\n");
     Sleep(3000);
     
@@ -137,12 +129,16 @@ DWORD WINAPI Thread_CLP_Mensagens(int index)
     char BloqLeitura_Nome[9];
     snprintf(BloqLeitura_Nome, 9, "Leitura%d", index+1);
 
-    eventos[0] = Tecla_Esc;
+    eventos[0] = OpenEvent(EVENT_ALL_ACCESS, FALSE, "Esc");
+    if (eventos[0] == NULL)
+    {
+        printf("ERROR : %d", GetLastError());
+    }
     eventos[1] = OpenEvent(EVENT_ALL_ACCESS, FALSE, BloqLeitura_Nome);
-    
-	if (eventos[0] == NULL) {
-		printf("ERROR : %d", GetLastError());
-	}
+    if (eventos[1] == NULL)
+    {
+        printf("ERROR : %d", GetLastError());
+    }
 
     do
     {
@@ -160,17 +156,18 @@ DWORD WINAPI Thread_CLP_Mensagens(int index)
         msg.pressao_interna = (msg.diag == 55) ? 0 : (rand()%99999 / 10.0);
         msg.pressao_injecao = (msg.diag == 55) ? 0 : (rand()%99999 / 10.0);
         msg.temp = (msg.diag == 55) ? 0 : (rand()%99999 / 10.0);
-        GetSystemTime(&msg.timestamp);
+        GetLocalTime(&msg.timestamp);
 
         encode_msg(&msg, msg_str);
-        printf("Mensagem Gerada: %s\n", msg);
+        printf("Mensagem Gerada: %s\n", msg_str);
 
-        Sleep(1+rand()%4);
+        Sleep(1000+(rand()%4000));
 
 	}while (evento_atual != 0);
     
 
-    CloseHandle(eventos);
+    CloseHandle(eventos[0]);
+    CloseHandle(eventos[1]);
     printf("Thread Leitura%d foi finalizada\n", index + 1);
     return(0);
 }
@@ -179,9 +176,13 @@ DWORD WINAPI Thread_CLP_Monitoracao(){
     DWORD Retorno;
     int evento_atual = -1;
     HANDLE eventos[2];
-    eventos[0] = Tecla_Esc;
+    eventos[0] = OpenEvent(EVENT_ALL_ACCESS, FALSE, "Esc");
+    if (eventos[0] == NULL)
+    {
+        printf("ERROR : %d", GetLastError());
+    }
     eventos[1] = OpenEvent(EVENT_ALL_ACCESS, FALSE, "Monitoracao");
-	if (eventos[0] == NULL) 
+	if (eventos[1] == NULL) 
     {
 		printf("ERROR : %d", GetLastError());
 	}
@@ -199,7 +200,8 @@ DWORD WINAPI Thread_CLP_Monitoracao(){
 
 	}while (evento_atual != 0);
 
-    CloseHandle(eventos);
+    CloseHandle(eventos[0]);
+    CloseHandle(eventos[1]);
     printf("Thread Monitoracao foi finalizada\n");
     return(0);
 }
@@ -208,7 +210,12 @@ DWORD WINAPI Thread_Retirada_Mensagens(){
     DWORD Retorno;
     HANDLE eventos[2];
     int evento_atual = -1;
-    eventos[0] = Tecla_Esc;
+
+    eventos[0] = OpenEvent(EVENT_ALL_ACCESS, FALSE, "Esc");
+    if (eventos[0] == NULL)
+    {
+        printf("ERROR : %d", GetLastError());
+    }
     eventos[1] =  OpenEvent(EVENT_ALL_ACCESS, FALSE, "Retirada");
 	if (eventos[1] == NULL) 
     {
@@ -222,14 +229,14 @@ DWORD WINAPI Thread_Retirada_Mensagens(){
         evento_atual = Retorno - WAIT_OBJECT_0;
         if (evento_atual == 0)
         {
-   
             break;
         }
 
    } while (evento_atual != 0);
 
   
-    CloseHandle(eventos);
+    CloseHandle(eventos[0]);
+    CloseHandle(eventos[1]);
     printf("Thread Retirada foi finalizada\n");
     return(0);
 }
@@ -248,7 +255,7 @@ int encode_msg(mensagem_t * dados, char * msg){
     pos_atual++;
 
     snprintf(string_formato, 20, "%%0%dd", ID_TAM);
-    snprintf(string_dado, 20, string_formato, dados->nseq);
+    snprintf(string_dado, 20, string_formato, dados->id);
     strncpy_s(&msg[pos_atual], MSG_TAM_TOT+1, string_dado, ID_TAM);
     pos_atual+= ID_TAM;
     strncpy_s(&msg[pos_atual], MSG_TAM_TOT+1, DELIMITADOR_CAMPO, 1);
@@ -282,7 +289,7 @@ int encode_msg(mensagem_t * dados, char * msg){
     strncpy_s(&msg[pos_atual], MSG_TAM_TOT+1, DELIMITADOR_CAMPO, 1);
     pos_atual++;
 
-    snprintf(string_formato, 20, "%02d:%02d:%02d");
+    snprintf(string_formato, 20, "%%02d:%%02d:%%02d");
     snprintf(string_dado, 20, string_formato, dados->timestamp.wHour, dados->timestamp.wMinute, dados->timestamp.wSecond);
     strncpy_s(&msg[pos_atual], MSG_TAM_TOT+1, string_dado, TIMESTAMP_TAM);
     pos_atual+= TIMESTAMP_TAM;

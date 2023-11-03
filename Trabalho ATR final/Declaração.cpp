@@ -7,7 +7,7 @@
 #include <time.h>
 #include "CheckForError.h"; 
 
-typedef unsigned (WINAPI* CAST_FUNCTION)(LPVOID);	// Casting para terceiro e sexto parâmetros da função
+typedef unsigned (WINAPI* CAST_FUNCTION)(LPVOID);	// Casting para terceiro e sexto parï¿½metros da funï¿½ï¿½o
 typedef unsigned* CAST_LPDWORD;
 
 #define Tecla1 0x31
@@ -23,11 +23,11 @@ struct mensagem_dados_processo
 {
 	//LIMITAR CARACTERES
 
-	int nseq; //Número sequencial da mensagem
-	int id; //Identificação do CLP
-	int diag; //Diagnóstico dos cartões do CLP
-	float pressao_interna; //Pressão interna na panela de gusa
-	float pressao_injecao; //Pressão de injeção do nitrogênio
+	int nseq; //Nï¿½mero sequencial da mensagem
+	int id; //Identificaï¿½ï¿½o do CLP
+	int diag; //Diagnï¿½stico dos cartï¿½es do CLP
+	float pressao_interna; //Pressï¿½o interna na panela de gusa
+	float pressao_injecao; //Pressï¿½o de injeï¿½ï¿½o do nitrogï¿½nio
 	float temp; //Temperatura na panela
 	time_t timestamp; //Horas da mensagem
 
@@ -78,6 +78,8 @@ BOOL Processo_Leitura;
 STARTUPINFO st_Leitura;
 PROCESS_INFORMATION PI_LEITURA;
 
+HANDLE ProcessesHandles[3];
+
 BOOL Alarme_Ativo = TRUE;
 BOOL Dados_Ativo = TRUE;
 BOOL Retirada_Ativo = TRUE;
@@ -89,7 +91,7 @@ int main()
 {
 
 	DWORD dwThreadRetirada, dwThreadAlarme, dwThreadDados, dwThreadLeitura1, dwThreadLeitura2, dwThreadLeitura3, dwThreadTeclado;
-	//VER PROGRAMA44 PARA FAZER AS MENSAGENS periódicas 
+	//VER PROGRAMA44 PARA FAZER AS MENSAGENS periï¿½dicas 
 	Tecla_Esc = CreateEvent(NULL, TRUE, FALSE, "Esc");
 	CheckForError(Tecla_Esc);
 	Bloq_Retirada = CreateEvent(NULL, TRUE, Retirada_Ativo, "Retirada");
@@ -130,6 +132,7 @@ int main()
 	{
 		printf("Processo de alarmes rodando\n");
 	}
+	ProcessesHandles[0] = PI.hProcess;
 
 
 	ZeroMemory(&st_Dados, sizeof(st_Dados));
@@ -155,6 +158,8 @@ int main()
 		printf("Processo de dados rodando\n");
 		
 	}
+	ProcessesHandles[1] = PI_DADOS.hProcess;
+
 	ZeroMemory(&st_Leitura, sizeof(st_Leitura));
 	st_Leitura.cb = sizeof(st_Leitura);
 
@@ -178,7 +183,7 @@ int main()
 		printf("Processo de dados rodando\n");
 
 	}
-
+	ProcessesHandles[2] = PI_LEITURA.hProcess;
 	
 	do
 	{
@@ -254,8 +259,11 @@ int main()
 	
 	SetEvent(Tecla_Esc);
 	printf("Processo de leitura do teclado encerrando sua execucao\n");
-	Sleep(3000);
-
+	Retorno = WaitForMultipleObjects(3, ProcessesHandles, TRUE, INFINITE);
+	if (Retorno != WAIT_OBJECT_0)
+	{
+		CheckForError(Retorno);
+	}
 
 	//Fechamento dos handles dos eventos
 	CloseHandle(Bloq_Dados);
@@ -265,12 +273,12 @@ int main()
 	CloseHandle(Bloq_Retirada);
 	CloseHandle(Bloq_Alarmes);
 	CloseHandle(Tecla_Esc);
+	CloseHandle(ProcessesHandles[0]);
+	CloseHandle(ProcessesHandles[1]);
+	CloseHandle(ProcessesHandles[2]);
 
 	CloseHandle(hin);
 
-
-
-	
 }
 /*
 
