@@ -66,6 +66,18 @@ alarme_code_t lista_alarmes[N_ALARMES] = {
     {"Z9", "Rebeliao das maquinas"},
 };
 
+/* ----------------------- Estrutura Lista Circular de Mensagens -------------------------------------- */
+
+#define MSG_LIMIT 100
+
+typedef struct {char msg[MSG_TAM_TOT+1];} msg_na_fila_t;
+
+msg_na_fila_t fila_msg[MSG_LIMIT];  // Lista Circular
+int pos_livre=0; int pos_ocupada=0;	// Contadores para lista circular
+HANDLE hMutexFilaMsg;
+HANDLE hSemConsumirMsg;
+
+
 /* ------------------------------------ Estrutura para os eventos -------------------------------------- */
 
 HANDLE ThreadsCLP[N_CLP_MENSAGENS + 1];
@@ -94,8 +106,14 @@ int main() {
     DWORD Retorno;
     DWORD ThreadID;
 
-    hMutex_nseq_msg = CreateMutex(NULL, FALSE, "NSEQ_MSG");
+    hMutex_nseq_msg = CreateMutex(NULL, FALSE, "MUTEX_NSEQ_MSG");
     CheckForError(hMutex_nseq_msg);
+
+    hMutexFilaMsg = CreateMutex(NULL, FALSE, "MUTEX_FILA");
+    CheckForError(hMutex_nseq_msg);
+
+    hSemConsumirMsg = CreateSemaphore(NULL, 0, MSG_LIMIT, "SEM_FILA");
+    CheckForError(hSemConsumirMsg);
 
     for (int i = 0; i < N_CLP_MENSAGENS; i++) {
         ThreadsCLP[i] = (HANDLE)_beginthreadex(NULL, 0, (CAST_FUNCTION)Thread_CLP_Mensagens, (LPVOID)(INT_PTR)i, 0, (CAST_LPDWORD)&ThreadID);
@@ -115,7 +133,7 @@ int main() {
         exit(0);
     }
 
-    ThreadsCLP[INDEX_RETIRADA] = (HANDLE)_beginthreadex(NULL, 0, (CAST_FUNCTION)Thread_CLP_Monitoracao, NULL, 0, (CAST_LPDWORD)&ThreadID);
+    ThreadsCLP[INDEX_RETIRADA] = (HANDLE)_beginthreadex(NULL, 0, (CAST_FUNCTION)Thread_Retirada_Mensagens, NULL, 0, (CAST_LPDWORD)&ThreadID);
     if (ThreadsCLP[INDEX_RETIRADA] != (HANDLE)-1L) {
         printf("Thread Retirada Criada com sucesso, ID = %0x\n", ThreadID);
     } else {
@@ -132,6 +150,11 @@ int main() {
     for (int i = 0; i < INDEX_RETIRADA + 1; i++) {
         CloseHandle(ThreadsCLP[i]);
     }
+
+    CloseHandle(hMutex_nseq_msg);
+    CloseHandle(hMutexFilaMsg);
+    CloseHandle(hSemConsumirMsg);
+
     printf("Finalizando Processos CLPs\n");
     Sleep(3000);
 }
@@ -143,33 +166,39 @@ DWORD WINAPI Thread_CLP_Mensagens(int index) {
     DWORD Retorno;
     mensagem_t msg;
     char msg_str[MSG_TAM_TOT + 1];
-    HANDLE h_bloq[2];
-    HANDLE h_nseq[2];
+    HANDLE hBloq[2];
+    HANDLE hNSeq[2];
+    HANDLE hFila[2];
     int evento_atual = -1;
 
     char BloqLeitura_Nome[9];
     snprintf(BloqLeitura_Nome, 9, "Leitura%d", index + 1);
 
-    h_bloq[0] = OpenEvent(EVENT_ALL_ACCESS, FALSE, "Esc");
-    if (h_bloq[0] == NULL) {
+    hBloq[0] = OpenEvent(EVENT_ALL_ACCESS, FALSE, "Esc");
+    if (hBloq[0] == NULL) {
         printf("ERROR : %d", GetLastError());
     }
-    h_bloq[1] = OpenEvent(EVENT_ALL_ACCESS, FALSE, BloqLeitura_Nome);
-    if (h_bloq[1] == NULL) {
+    hBloq[1] = OpenEvent(EVENT_ALL_ACCESS, FALSE, BloqLeitura_Nome);
+    if (hBloq[1] == NULL) {
         printf("ERROR : %d", GetLastError());
     }
 
-    h_nseq[0] = h_bloq[0];
-    h_nseq[1] = hMutex_nseq_msg;
+    hNSeq[0] = hBloq[0];
+    hNSeq[1] = hMutex_nseq_msg;
+
+    hFila[0] = hBloq[0];
+    hFila[1] = hMutexFilaMsg;
 
     do {
-        Retorno = WaitForMultipleObjects(2, h_bloq, FALSE, INFINITE);
+        /* Verificar se está bloqueada */
+        Retorno = WaitForMultipleObjects(2, hBloq, FALSE, INFINITE);
         evento_atual = Retorno - WAIT_OBJECT_0;
         if (evento_atual == 0) {
             break;
         }
 
-        Retorno  = WaitForMultipleObjects(2, h_nseq, FALSE, INFINITE);
+        /* Produzir dados da mensagem */
+        Retorno  = WaitForMultipleObjects(2, hNSeq, FALSE, INFINITE);
         evento_atual = Retorno - WAIT_OBJECT_0;
         if (evento_atual == 0) {
             break;
@@ -186,15 +215,28 @@ DWORD WINAPI Thread_CLP_Mensagens(int index) {
         msg.temp = (msg.diag == 55) ? 0 : (rand() % 99999 / 10.0);
         GetLocalTime(&msg.timestamp);
 
+        /* Transformar dados em string separada por ; */
         encode_msg(&msg, msg_str);
         printf("Mensagem Gerada: %s\n", msg_str);
 
+        /* Inserir na Fila de Mensagens e notificar mensagem a ser consumida*/
+        Retorno  = WaitForMultipleObjects(2, hFila, FALSE, INFINITE);
+        evento_atual = Retorno - WAIT_OBJECT_0;
+        if (evento_atual == 0) {
+            break;
+        }
+        memcpy(&fila_msg[pos_livre].msg, msg_str, MSG_TAM_TOT);
+        pos_livre += 1;
+        ReleaseSemaphore(hSemConsumirMsg, 1, NULL);
+        ReleaseMutex(hMutexFilaMsg);
+
+        /* Dormir por 1 a 5 segundos (aleatorio) */
         Sleep(1000 + (rand() % 4000));
 
     } while (evento_atual != 0);
 
-    CloseHandle(h_bloq[0]);
-    CloseHandle(h_bloq[1]);
+    CloseHandle(hBloq[0]);
+    CloseHandle(hBloq[1]);
     printf("Thread Leitura%d foi finalizada\n", index + 1);
     return (0);
 }
@@ -206,18 +248,18 @@ DWORD WINAPI Thread_CLP_Monitoracao() {
     alarme_t alarme;
     char alarme_str[ALARME_TAM_TOT+1];
     
-    HANDLE eventos[2];
-    eventos[0] = OpenEvent(EVENT_ALL_ACCESS, FALSE, "Esc");
-    if (eventos[0] == NULL) {
+    HANDLE hBloq[2];
+    hBloq[0] = OpenEvent(EVENT_ALL_ACCESS, FALSE, "Esc");
+    if (hBloq[0] == NULL) {
         printf("ERROR : %d", GetLastError());
     }
-    eventos[1] = OpenEvent(EVENT_ALL_ACCESS, FALSE, "Monitoracao");
-    if (eventos[1] == NULL) {
+    hBloq[1] = OpenEvent(EVENT_ALL_ACCESS, FALSE, "Monitoracao");
+    if (hBloq[1] == NULL) {
         printf("ERROR : %d", GetLastError());
     }
 
     do {
-        Retorno = WaitForMultipleObjects(2, eventos, FALSE, INFINITE);
+        Retorno = WaitForMultipleObjects(2, hBloq, FALSE, INFINITE);
         evento_atual = Retorno - WAIT_OBJECT_0;
         if (evento_atual == 0) {
             break;
@@ -236,38 +278,70 @@ DWORD WINAPI Thread_CLP_Monitoracao() {
 
     } while (evento_atual != 0);
 
-    CloseHandle(eventos[0]);
-    CloseHandle(eventos[1]);
+    CloseHandle(hBloq[0]);
+    CloseHandle(hBloq[1]);
     printf("Thread Monitoracao foi finalizada\n");
     return (0);
 }
 
 DWORD WINAPI Thread_Retirada_Mensagens() {
     DWORD Retorno;
-    HANDLE eventos[2];
+    HANDLE hBloq[2];
+    HANDLE hFila[2];
+    HANDLE hConsumir[2];
+    msg_na_fila_t msg;
     int evento_atual = -1;
 
-    eventos[0] = OpenEvent(EVENT_ALL_ACCESS, FALSE, "Esc");
-    if (eventos[0] == NULL) {
+    hBloq[0] = OpenEvent(EVENT_ALL_ACCESS, FALSE, "Esc");
+    if (hBloq[0] == NULL) {
         printf("ERROR : %d", GetLastError());
     }
-    eventos[1] = OpenEvent(EVENT_ALL_ACCESS, FALSE, "Retirada");
-    if (eventos[1] == NULL) {
+    hBloq[1] = OpenEvent(EVENT_ALL_ACCESS, FALSE, "Retirada");
+    if (hBloq[1] == NULL) {
         printf("ERROR : %d", GetLastError());
     }
 
+    hFila[0] = hBloq[0];
+    hFila[1] = hMutexFilaMsg;
+
+    hConsumir[0] = hBloq[0];
+    hConsumir[1] = hSemConsumirMsg;
+
     do {
-        printf("Retirada Mensagens\n");
-        Retorno = WaitForMultipleObjects(2, eventos, FALSE, INFINITE);
+        /* Verifica se esta bloqueada */
+        Retorno = WaitForMultipleObjects(2, hBloq, FALSE, INFINITE);
         evento_atual = Retorno - WAIT_OBJECT_0;
         if (evento_atual == 0) {
             break;
         }
 
+
+        /* Aguarda haver mensagem a ser consumida */
+        Retorno = WaitForMultipleObjects(2, hConsumir, FALSE, INFINITE);
+        evento_atual = Retorno - WAIT_OBJECT_0;
+        if (evento_atual == 0) {
+            break;
+        }
+
+
+        /* Consome mensagem */
+        Retorno = WaitForMultipleObjects(2, hFila, FALSE, INFINITE);
+        evento_atual = Retorno - WAIT_OBJECT_0;
+        if (evento_atual == 0) {
+            break;
+        }
+        memcpy(&msg.msg, &fila_msg[pos_ocupada].msg, MSG_TAM_TOT);
+        pos_ocupada++;
+        ReleaseMutex(hMutexFilaMsg);
+
+        /* Trata mensagem */
+        msg.msg[MSG_TAM_TOT] = '\0';
+        printf("Mensagem Retirada: %s\n", msg.msg);
+
     } while (evento_atual != 0);
 
-    CloseHandle(eventos[0]);
-    CloseHandle(eventos[1]);
+    CloseHandle(hBloq[0]);
+    CloseHandle(hBloq[1]);
     printf("Thread Retirada foi finalizada\n");
     return (0);
 }
