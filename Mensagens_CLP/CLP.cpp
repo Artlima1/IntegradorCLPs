@@ -68,11 +68,11 @@ alarme_code_t lista_alarmes[N_ALARMES] = {
 
 /* ----------------------- Estrutura Lista Circular de Mensagens -------------------------------------- */
 
-#define MSG_LIMIT 100
+#define MSG_LIMITE 100
 
 typedef struct {char msg[MSG_TAM_TOT+1];} msg_na_fila_t;
 
-msg_na_fila_t fila_msg[MSG_LIMIT];  // Lista Circular
+msg_na_fila_t fila_msg[MSG_LIMITE];  // Lista Circular
 int pos_livre=0; int pos_ocupada=0;	// Contadores para lista circular
 HANDLE hMutexFilaMsg;
 HANDLE hSemConsumirMsg;
@@ -112,7 +112,7 @@ int main() {
     hMutexFilaMsg = CreateMutex(NULL, FALSE, "MUTEX_FILA");
     CheckForError(hMutex_nseq_msg);
 
-    hSemConsumirMsg = CreateSemaphore(NULL, 0, MSG_LIMIT, "SEM_FILA");
+    hSemConsumirMsg = CreateSemaphore(NULL, 0, MSG_LIMITE, "SEM_FILA");
     CheckForError(hSemConsumirMsg);
 
     for (int i = 0; i < N_CLP_MENSAGENS; i++) {
@@ -226,7 +226,7 @@ DWORD WINAPI Thread_CLP_Mensagens(int index) {
             break;
         }
         memcpy(&fila_msg[pos_livre].msg, msg_str, MSG_TAM_TOT);
-        pos_livre += 1;
+        pos_livre = (pos_livre + 1) % MSG_LIMITE;
         ReleaseSemaphore(hSemConsumirMsg, 1, NULL);
         ReleaseMutex(hMutexFilaMsg);
 
@@ -331,7 +331,7 @@ DWORD WINAPI Thread_Retirada_Mensagens() {
             break;
         }
         memcpy(&msg.msg, &fila_msg[pos_ocupada].msg, MSG_TAM_TOT);
-        pos_ocupada++;
+        pos_ocupada = (pos_ocupada + 1) % MSG_LIMITE;
         ReleaseMutex(hMutexFilaMsg);
 
         /* Trata mensagem */
