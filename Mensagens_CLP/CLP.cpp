@@ -68,7 +68,7 @@ alarme_code_t lista_alarmes[N_ALARMES] = {
 
 /* ----------------------- Estrutura Lista Circular de Mensagens -------------------------------------- */
 
-#define MSG_LIMITE 100
+#define MSG_LIMITE 10
 
 typedef struct {char msg[MSG_TAM_TOT+1];} msg_na_fila_t;
 
@@ -76,7 +76,7 @@ msg_na_fila_t fila_msg[MSG_LIMITE];  // Lista Circular
 int pos_livre=0; int pos_ocupada=0;	// Contadores para lista circular
 HANDLE hMutexFilaMsg;
 HANDLE hSemConsumirMsg;
-
+HANDLE hSemProduzirMsg;
 
 /* ------------------------------------ Estrutura para os eventos -------------------------------------- */
 
@@ -112,8 +112,11 @@ int main() {
     hMutexFilaMsg = CreateMutex(NULL, FALSE, "MUTEX_FILA");
     CheckForError(hMutex_nseq_msg);
 
-    hSemConsumirMsg = CreateSemaphore(NULL, 0, MSG_LIMITE, "SEM_FILA");
+    hSemConsumirMsg = CreateSemaphore(NULL, 0, MSG_LIMITE, "SEM_CONSUMIR");
     CheckForError(hSemConsumirMsg);
+
+    hSemProduzirMsg = CreateSemaphore(NULL, MSG_LIMITE, MSG_LIMITE, "SEM_PRODUZIR");
+    CheckForError(hSemProduzirMsg);
 
     for (int i = 0; i < N_CLP_MENSAGENS; i++) {
         ThreadsCLP[i] = (HANDLE)_beginthreadex(NULL, 0, (CAST_FUNCTION)Thread_CLP_Mensagens, (LPVOID)(INT_PTR)i, 0, (CAST_LPDWORD)&ThreadID);
@@ -154,6 +157,7 @@ int main() {
     CloseHandle(hMutex_nseq_msg);
     CloseHandle(hMutexFilaMsg);
     CloseHandle(hSemConsumirMsg);
+    CloseHandle(hSemProduzirMsg);
 
     printf("Finalizando Processos CLPs\n");
     Sleep(3000);
@@ -169,6 +173,7 @@ DWORD WINAPI Thread_CLP_Mensagens(int index) {
     HANDLE hBloq[2];
     HANDLE hNSeq[2];
     HANDLE hFila[2];
+    HANDLE hProduzir[2];
     int evento_atual = -1;
 
     char BloqLeitura_Nome[9];
@@ -189,9 +194,19 @@ DWORD WINAPI Thread_CLP_Mensagens(int index) {
     hFila[0] = hBloq[0];
     hFila[1] = hMutexFilaMsg;
 
+    hProduzir[0] = hBloq[0];
+    hProduzir[1] = hSemProduzirMsg;
+
     do {
         /* Verificar se está bloqueada */
         Retorno = WaitForMultipleObjects(2, hBloq, FALSE, INFINITE);
+        evento_atual = Retorno - WAIT_OBJECT_0;
+        if (evento_atual == 0) {
+            break;
+        }
+
+        /* Verificar se há espaço disponivel na fila */
+        Retorno = WaitForMultipleObjects(2, hProduzir, FALSE, INFINITE);
         evento_atual = Retorno - WAIT_OBJECT_0;
         if (evento_atual == 0) {
             break;
@@ -227,8 +242,8 @@ DWORD WINAPI Thread_CLP_Mensagens(int index) {
         }
         memcpy(&fila_msg[pos_livre].msg, msg_str, MSG_TAM_TOT);
         pos_livre = (pos_livre + 1) % MSG_LIMITE;
-        ReleaseSemaphore(hSemConsumirMsg, 1, NULL);
         ReleaseMutex(hMutexFilaMsg);
+        ReleaseSemaphore(hSemConsumirMsg, 1, NULL);
 
         /* Dormir por 1 a 5 segundos (aleatorio) */
         Sleep(1000 + (rand() % 4000));
@@ -337,6 +352,9 @@ DWORD WINAPI Thread_Retirada_Mensagens() {
         /* Trata mensagem */
         msg.msg[MSG_TAM_TOT] = '\0';
         printf("Mensagem Retirada: %s\n", msg.msg);
+
+        /* Libera producao */
+        ReleaseSemaphore(hSemProduzirMsg, 1, NULL);
 
     } while (evento_atual != 0);
 
