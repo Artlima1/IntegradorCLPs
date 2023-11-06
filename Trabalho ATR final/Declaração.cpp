@@ -168,7 +168,7 @@ int main()
 		NULL,
 		NULL,
 		FALSE,
-		CREATE_NEW_CONSOLE,
+		NORMAL_PRIORITY_CLASS,
 		NULL,
 		NULL,
 		&st_Leitura,
