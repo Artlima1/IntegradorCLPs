@@ -9,28 +9,14 @@
 
 
 
-typedef unsigned (WINAPI* CAST_FUNCTION)(LPVOID);	// Casting para terceiro e sexto parâmetros da função
-typedef unsigned* CAST_LPDWORD;
+
+
 HANDLE Bloq_Dados;
 HANDLE Tecla_Esc;
 int Retorno = 0;
 int evento_atual = -1;
-
+int bloq = 1;
 HANDLE eventos[2];
-
-struct mensagem_dados_processo
-{
-	//LIMITAR CARACTERES
-
-	int nseq; //Número sequencial da mensagem
-	int id; //Identificação do CLP
-	int diag; //Diagnóstico dos cartões do CLP
-	float pressao_interna; //Pressão interna na panela de gusa
-	float pressao_injecao; //Pressão de injeção do nitrogênio
-	float temp; //Temperatura na panela
-	time_t timestamp; //Horas da mensagem
-
-};
 
 
 
@@ -50,16 +36,23 @@ int main()
 	eventos[1] = Bloq_Dados;
    	do
 	{
-		printf("Thread dados \n");
-		printf("Aguardando evento\n");
-		Retorno = WaitForMultipleObjects(2, eventos, FALSE, INFINITE);
-		evento_atual = Retorno - WAIT_OBJECT_0;
-		if (evento_atual == 0)
-		{
-			break;
-		}
-
-		printf("Thread Desbloqueada\n");
+		    Sleep(1000);
+			Retorno = WaitForMultipleObjects(2, eventos, FALSE, 200);
+			evento_atual = Retorno - WAIT_OBJECT_0;
+			if (evento_atual == 0)
+			{
+				break;
+			}
+			if(evento_atual !=0 && Retorno != WAIT_TIMEOUT)
+			{
+					printf("Thread de exibicao de dados desbloqueada\n");
+					
+				
+			}
+			else if (Retorno == WAIT_TIMEOUT)
+			{
+				printf("Thread de exibicao de dados Bloqueada\n");
+			}
 
 
 
@@ -67,7 +60,8 @@ int main()
 
 	CloseHandle(Bloq_Dados);
 	CloseHandle(Tecla_Esc);
-	CloseHandle(eventos);
+	CloseHandle(eventos[0]);
+	CloseHandle(eventos[1]);
 
 	printf("Processo de exibicao de dados encerrando sua execucao\n");
 	Sleep(3000);

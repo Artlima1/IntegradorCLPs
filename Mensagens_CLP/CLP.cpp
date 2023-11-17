@@ -5,7 +5,7 @@
 #include <stdlib.h>
 #include <string.h>
 #include <time.h>
-#include <windows.h>a
+#include <windows.h>
 
 #include "CheckForError.h";
 
@@ -27,6 +27,14 @@
 #define MSG_TEMP_TAM 6
 #define MSG_TIMESTAMP_TAM 8
 
+#define ALARME_TAM_TOT 17
+#define ALARME_NSEQ_TAM 5
+#define ALARME_ID_TAM 2
+#define ALARME_TIMESTAMP_TAM 8
+#define N_ALARMES 5
+
+#define MSG_LIMITE 100
+/* ---------------------Struct para mensagem de dados ----------------------------- */
 typedef struct {
     int nseq;               // N�mero sequencial da mensagem
     int id;                 // Identifica��o do CLP
@@ -38,12 +46,10 @@ typedef struct {
 } mensagem_t;
 
 int nseq_msg = 0;
+int bloqueio = 0;
 HANDLE hMutex_nseq_msg;
+HANDLE hMutex_Verificaespaco;
 
-#define ALARME_TAM_TOT 17
-#define ALARME_NSEQ_TAM 5
-#define ALARME_ID_TAM 2
-#define ALARME_TIMESTAMP_TAM 8
 
 typedef struct {
     int nseq;                   // N�mero sequencial da mensagem
@@ -53,8 +59,6 @@ typedef struct {
 
 int nseq_alarme = 0;
 
-#define N_ALARMES 3
-
 typedef struct {
     char id[ALARME_ID_TAM + 1];
     char descricao[50];
@@ -62,13 +66,14 @@ typedef struct {
 
 alarme_code_t lista_alarmes[N_ALARMES] = {
     {"A2", "Esteira Parou"},
-    {"C8", "Ferro nao esquentando"},
-    {"Z9", "Rebeliao das maquinas"},
+    {"T1", "Temperatura baixa para a reacao"},
+    {"Q2", "Baixa pressao de injecao do nitrogenio"},
+    {"C4", "Concentracao baixa de carbono no sistema"},
+    {"C6", "Concentracao baixa de silicio no sistema"},
+
 };
 
 /* ----------------------- Estrutura Lista Circular de Mensagens -------------------------------------- */
-
-#define MSG_LIMITE 10
 
 typedef struct {char msg[MSG_TAM_TOT+1];} msg_na_fila_t;
 
@@ -77,6 +82,7 @@ int pos_livre=0; int pos_ocupada=0;	// Contadores para lista circular
 HANDLE hMutexFilaMsg;
 HANDLE hSemConsumirMsg;
 HANDLE hSemProduzirMsg;
+int total_mensagem = 0;
 
 /* ------------------------------------ Estrutura para os eventos -------------------------------------- */
 
@@ -118,6 +124,10 @@ int main() {
     hSemProduzirMsg = CreateSemaphore(NULL, MSG_LIMITE, MSG_LIMITE, "SEM_PRODUZIR");
     CheckForError(hSemProduzirMsg);
 
+    hMutex_Verificaespaco = CreateMutex(NULL, FALSE, "Mutex_espaco");
+    CheckForError(hMutex_Verificaespaco);
+
+
     for (int i = 0; i < N_CLP_MENSAGENS; i++) {
         ThreadsCLP[i] = (HANDLE)_beginthreadex(NULL, 0, (CAST_FUNCTION)Thread_CLP_Mensagens, (LPVOID)(INT_PTR)i, 0, (CAST_LPDWORD)&ThreadID);
         if (ThreadsCLP[i] != (HANDLE)-1L) {
@@ -158,6 +168,7 @@ int main() {
     CloseHandle(hMutexFilaMsg);
     CloseHandle(hSemConsumirMsg);
     CloseHandle(hSemProduzirMsg);
+    CloseHandle(hMutex_Verificaespaco);
 
     printf("Finalizando Processos CLPs\n");
     Sleep(3000);
@@ -169,12 +180,13 @@ DWORD WINAPI Thread_CLP_Mensagens(int index) {
     srand(GetCurrentThreadId());
     DWORD Retorno;
     mensagem_t msg;
-    char msg_str[MSG_TAM_TOT + 1];
+    char msg_str[MSG_TAM_TOT + MSG_TAM_TOT];
     HANDLE hBloq[2];
     HANDLE hNSeq[2];
     HANDLE hFila[2];
     HANDLE hProduzir[2];
     int evento_atual = -1;
+    
 
     char BloqLeitura_Nome[9];
     snprintf(BloqLeitura_Nome, 9, "Leitura%d", index + 1);
@@ -199,54 +211,73 @@ DWORD WINAPI Thread_CLP_Mensagens(int index) {
 
     do {
         /* Verificar se está bloqueada */
-        Retorno = WaitForMultipleObjects(2, hBloq, FALSE, INFINITE);
+        Retorno = WaitForMultipleObjects(2, hBloq, FALSE, 100);
         evento_atual = Retorno - WAIT_OBJECT_0;
-        if (evento_atual == 0) {
+        if (evento_atual == 0) 
+        {
             break;
         }
+        if(evento_atual != 0 && Retorno != WAIT_TIMEOUT)
+        {      /* Verificar se há espaço disponivel na fila */
+                WaitForSingleObject(hMutex_Verificaespaco, INFINITE);
+                if (total_mensagem == MSG_LIMITE)
+                {
+                    printf("Fila cheia\n");
+                }
+                ReleaseMutex(hMutex_Verificaespaco);
 
-        /* Verificar se há espaço disponivel na fila */
-        Retorno = WaitForMultipleObjects(2, hProduzir, FALSE, INFINITE);
-        evento_atual = Retorno - WAIT_OBJECT_0;
-        if (evento_atual == 0) {
-            break;
+               
+                Retorno = WaitForMultipleObjects(2, hProduzir, FALSE, INFINITE);
+                evento_atual = Retorno - WAIT_OBJECT_0;
+                if (evento_atual == 0) {
+                    break;
+                }
+
+                /* Produzir dados da mensagem */
+                Retorno = WaitForMultipleObjects(2, hNSeq, FALSE, INFINITE);
+                evento_atual = Retorno - WAIT_OBJECT_0;
+                if (evento_atual == 0) {
+                    break;
+                }
+
+                msg.nseq = nseq_msg++;
+                if (nseq_msg > NSEQ_MAX) nseq_msg = 0;
+                ReleaseMutex(hMutex_nseq_msg);
+
+                msg.id = index + 1;
+                msg.diag = rand() % 99;
+                msg.pressao_interna = (msg.diag == 55) ? 0 : (rand() % 99999 / 10.0);
+                msg.pressao_injecao = (msg.diag == 55) ? 0 : (rand() % 99999 / 10.0);
+                msg.temp = (msg.diag == 55) ? 0 : (rand() % 99999 / 10.0);
+                GetLocalTime(&msg.timestamp);
+
+                /* Transformar dados em string separada por ; */
+                encode_msg(&msg, msg_str);
+                printf("Mensagem Gerada: %s\n", msg_str);
+                WaitForSingleObject(hMutex_Verificaespaco, INFINITE);
+                total_mensagem++;
+                ReleaseMutex(hMutex_Verificaespaco);
+
+                /* Inserir na Fila de Mensagens e notificar mensagem a ser consumida*/
+                Retorno = WaitForMultipleObjects(2, hFila, FALSE, INFINITE);
+                evento_atual = Retorno - WAIT_OBJECT_0;
+                if (evento_atual == 0) {
+                    break;
+                }
+                memcpy(&fila_msg[pos_livre].msg, msg_str, MSG_TAM_TOT);
+                pos_livre = (pos_livre + 1) % MSG_LIMITE;
+                ReleaseMutex(hMutexFilaMsg);
+                ReleaseSemaphore(hSemConsumirMsg, 1, NULL);
+
+                /* Dormir por 1 a 5 segundos (aleatorio) */
+                Sleep(1000 + (rand() % 4000));
+            
         }
-
-        /* Produzir dados da mensagem */
-        Retorno  = WaitForMultipleObjects(2, hNSeq, FALSE, INFINITE);
-        evento_atual = Retorno - WAIT_OBJECT_0;
-        if (evento_atual == 0) {
-            break;
+        if (Retorno == WAIT_TIMEOUT)
+        {
+            printf("Thread de leitura de CLPs %d de mensagens bloqueada\n", index+1);
+            Sleep(1000);
         }
-
-        msg.nseq = nseq_msg++;
-        if(nseq_msg > NSEQ_MAX) nseq_msg = 0;
-        ReleaseMutex(hMutex_nseq_msg);
-
-        msg.id = index + 1;
-        msg.diag = rand() % 99;
-        msg.pressao_interna = (msg.diag == 55) ? 0 : (rand() % 99999 / 10.0);
-        msg.pressao_injecao = (msg.diag == 55) ? 0 : (rand() % 99999 / 10.0);
-        msg.temp = (msg.diag == 55) ? 0 : (rand() % 99999 / 10.0);
-        GetLocalTime(&msg.timestamp);
-
-        /* Transformar dados em string separada por ; */
-        encode_msg(&msg, msg_str);
-        printf("Mensagem Gerada: %s\n", msg_str);
-
-        /* Inserir na Fila de Mensagens e notificar mensagem a ser consumida*/
-        Retorno  = WaitForMultipleObjects(2, hFila, FALSE, INFINITE);
-        evento_atual = Retorno - WAIT_OBJECT_0;
-        if (evento_atual == 0) {
-            break;
-        }
-        memcpy(&fila_msg[pos_livre].msg, msg_str, MSG_TAM_TOT);
-        pos_livre = (pos_livre + 1) % MSG_LIMITE;
-        ReleaseMutex(hMutexFilaMsg);
-        ReleaseSemaphore(hSemConsumirMsg, 1, NULL);
-
-        /* Dormir por 1 a 5 segundos (aleatorio) */
-        Sleep(1000 + (rand() % 4000));
 
     } while (evento_atual != 0);
 
@@ -256,16 +287,17 @@ DWORD WINAPI Thread_CLP_Mensagens(int index) {
     return (0);
 }
 
-DWORD WINAPI Thread_CLP_Monitoracao() {
+DWORD WINAPI Thread_CLP_Monitoracao() 
+{
     srand(GetCurrentThreadId());
     DWORD Retorno;
     int evento_atual = -1;
     alarme_t alarme;
-    char alarme_str[ALARME_TAM_TOT+1];
-    
+    char alarme_str[ALARME_TAM_TOT+ALARME_TAM_TOT];
     HANDLE hBloq[2];
     hBloq[0] = OpenEvent(EVENT_ALL_ACCESS, FALSE, "Esc");
-    if (hBloq[0] == NULL) {
+    if (hBloq[0] == NULL) 
+    {
         printf("ERROR : %d", GetLastError());
     }
     hBloq[1] = OpenEvent(EVENT_ALL_ACCESS, FALSE, "Monitoracao");
@@ -273,23 +305,33 @@ DWORD WINAPI Thread_CLP_Monitoracao() {
         printf("ERROR : %d", GetLastError());
     }
 
-    do {
-        Retorno = WaitForMultipleObjects(2, hBloq, FALSE, INFINITE);
+    do 
+    {
+
+        Retorno = WaitForMultipleObjects(2, hBloq, FALSE, 100);
         evento_atual = Retorno - WAIT_OBJECT_0;
         if (evento_atual == 0) {
             break;
         }
+        if (evento_atual != 0 && Retorno != WAIT_TIMEOUT) {
 
-        alarme.nseq = nseq_alarme++;
-        if(nseq_msg > NSEQ_MAX) nseq_alarme = 0;
 
-        strcpy_s(alarme.id, ALARME_ID_TAM+1, lista_alarmes[rand()%N_ALARMES].id);
-        GetLocalTime(&alarme.timestamp);
+            alarme.nseq = nseq_alarme++;
+            if (nseq_msg > NSEQ_MAX) nseq_alarme = 0;
 
-        encode_alarme(&alarme, alarme_str);
-        printf("Alarme Gerado: %s\n", alarme_str);
+            strcpy_s(alarme.id, ALARME_ID_TAM + 1, lista_alarmes[rand() % N_ALARMES].id);
+            GetLocalTime(&alarme.timestamp);
 
-        Sleep(1000 + (rand() % 4000));
+            encode_alarme(&alarme, alarme_str);
+            printf("Alarme Gerado: %s\n", alarme_str);
+
+            Sleep(1000 + (rand() % 4000));
+        }
+        if (Retorno == WAIT_TIMEOUT)
+        {
+            printf("Thread de monitoracao de alarmes bloqueada\n");
+            Sleep(1000);
+        }
 
     } while (evento_atual != 0);
 
@@ -322,39 +364,58 @@ DWORD WINAPI Thread_Retirada_Mensagens() {
     hConsumir[0] = hBloq[0];
     hConsumir[1] = hSemConsumirMsg;
 
-    do {
+
+    do 
+    {
         /* Verifica se esta bloqueada */
-        Retorno = WaitForMultipleObjects(2, hBloq, FALSE, INFINITE);
+        Retorno = WaitForMultipleObjects(2, hBloq, FALSE, 500);
         evento_atual = Retorno - WAIT_OBJECT_0;
-        if (evento_atual == 0) {
+        if (evento_atual == 0) 
+        {
             break;
         }
-
-
-        /* Aguarda haver mensagem a ser consumida */
-        Retorno = WaitForMultipleObjects(2, hConsumir, FALSE, INFINITE);
-        evento_atual = Retorno - WAIT_OBJECT_0;
-        if (evento_atual == 0) {
-            break;
+        else if (Retorno == WAIT_TIMEOUT)
+        {
+            printf("Thread de retirada bloqueada\n");
+            Sleep(2000);
         }
+        else if (evento_atual != 0 && Retorno != WAIT_TIMEOUT)
+        {
+            /* Aguarda haver mensagem a ser consumida */
+            Retorno= WaitForMultipleObjects(2, hConsumir, FALSE, INFINITE);
+            evento_atual = Retorno - WAIT_OBJECT_0;
+            if (evento_atual == 0) 
+            {
+                break;
+            }
+           
+                else
+                {
 
-
-        /* Consome mensagem */
-        Retorno = WaitForMultipleObjects(2, hFila, FALSE, INFINITE);
-        evento_atual = Retorno - WAIT_OBJECT_0;
-        if (evento_atual == 0) {
-            break;
-        }
-        memcpy(&msg.msg, &fila_msg[pos_ocupada].msg, MSG_TAM_TOT);
-        pos_ocupada = (pos_ocupada + 1) % MSG_LIMITE;
-        ReleaseMutex(hMutexFilaMsg);
-
-        /* Trata mensagem */
-        msg.msg[MSG_TAM_TOT] = '\0';
-        printf("Mensagem Retirada: %s\n", msg.msg);
-
-        /* Libera producao */
-        ReleaseSemaphore(hSemProduzirMsg, 1, NULL);
+                    /* Consome mensagem */
+                    Retorno = WaitForMultipleObjects(2, hFila, FALSE, INFINITE);
+                    evento_atual = Retorno - WAIT_OBJECT_0;
+                    if (evento_atual == 0) {
+                        break;
+                    }
+                    else
+                    {
+                        memcpy(&msg.msg, &fila_msg[pos_ocupada].msg, MSG_TAM_TOT);
+                        pos_ocupada = (pos_ocupada + 1) % MSG_LIMITE;
+                        ReleaseMutex(hMutexFilaMsg);
+                        WaitForSingleObject(hMutex_Verificaespaco, INFINITE);
+                        total_mensagem--;
+                        ReleaseMutex(hMutex_Verificaespaco);
+                        /* Trata mensagem */
+                        msg.msg[MSG_TAM_TOT] = '\0';
+                        printf("Mensagem Retirada: %s\n", msg.msg);
+                        /* Libera producao */
+                        ReleaseSemaphore(hSemProduzirMsg, 1, NULL);
+                    }
+                }
+                
+            }
+        
 
     } while (evento_atual != 0);
 

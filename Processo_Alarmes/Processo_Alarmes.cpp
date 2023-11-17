@@ -15,6 +15,7 @@ HANDLE Tecla_Esc;
 int Retorno = 0;
 int bloqueada = 0;
 int evento_atual = -1;
+
 int main()
 {
 	
@@ -32,16 +33,26 @@ int main()
 	eventos[1] = Bloq_Alarmes;
 	do
 	{
-		printf("Thread Alarmes\n");
-		printf("Aguardando evento\n");
-		Retorno = WaitForMultipleObjects(2, eventos, FALSE, INFINITE);
-	    evento_atual = Retorno - WAIT_OBJECT_0;
-		if (evento_atual ==  0)
+		
+
+		Sleep(1000);
+		Retorno = WaitForMultipleObjects(2, eventos, FALSE, 100);
+		evento_atual = Retorno - WAIT_OBJECT_0;
+		if (evento_atual == 0)
 		{
 			break;
 		}
-	    
-		printf("Thread Desbloqueada\n");
+		if (evento_atual != 0 && Retorno != WAIT_TIMEOUT)
+		{
+			printf("Thread de alarmes desbloqueada\n");
+
+		}
+		else if (Retorno == WAIT_TIMEOUT)
+		{
+			printf("Thread de alarmes Bloqueada\n");
+		}
+
+
 		
 		
 		
