@@ -7,61 +7,43 @@
 #include <time.h>
 #include "CheckForError.h"; 
 
-
-
-
-
-HANDLE Bloq_Dados;
-HANDLE Tecla_Esc;
-int Retorno = 0;
-int evento_atual = -1;
-int bloq = 1;
-HANDLE eventos[2];
-
-
+HANDLE hSwitchDados;
+HANDLE hEsc;
+int ret = 0;
+HANDLE hEventos[2];
 
 int main()
 {
-	Tecla_Esc = OpenEvent(EVENT_ALL_ACCESS, FALSE, "Esc");
-	if (Tecla_Esc == NULL)
+	hEsc = OpenEvent(EVENT_ALL_ACCESS, FALSE, "Esc");
+	if (hEsc == NULL)
 	{
 		printf("ERROR : %d", GetLastError());
 	}
 
-	Bloq_Dados = OpenEvent(EVENT_ALL_ACCESS, FALSE, "Dados");
-	if (Bloq_Dados == NULL) {
+	hSwitchDados = OpenEvent(EVENT_ALL_ACCESS, FALSE, "Dados");
+	if (hSwitchDados == NULL) {
 		printf("ERROR : %d", GetLastError());
 	}
-	eventos[0] = Tecla_Esc;
-	eventos[1] = Bloq_Dados;
-   	do
+	hEventos[0] = hEsc;
+	hEventos[1] = hSwitchDados;
+
+	printf("Thread de dados Inicializada\n");
+   	while(1)
 	{
-		    Sleep(1000);
-			Retorno = WaitForMultipleObjects(2, eventos, FALSE, 200);
-			evento_atual = Retorno - WAIT_OBJECT_0;
-			if (evento_atual == 0)
-			{
+		ret = WaitForMultipleObjects(2, hEventos, FALSE, 0);
+		if (ret == WAIT_OBJECT_0) break;
+		if(ret == WAIT_OBJECT_0 + 1){
+			printf("Thread de dados Bloqueada\n");
+			ret = WaitForMultipleObjects(2, hEventos, FALSE, INFINITE);
+			if (ret == WAIT_OBJECT_0){
 				break;
 			}
-			if(evento_atual !=0 && Retorno != WAIT_TIMEOUT)
-			{
-					printf("Thread de exibicao de dados desbloqueada\n");
-					
-				
-			}
-			else if (Retorno == WAIT_TIMEOUT)
-			{
-				printf("Thread de exibicao de dados Bloqueada\n");
-			}
+			printf("Thread de dados Desbloqueada\n");
+		}
+   }
 
-
-
-   } while (evento_atual != 0);
-
-	CloseHandle(Bloq_Dados);
-	CloseHandle(Tecla_Esc);
-	CloseHandle(eventos[0]);
-	CloseHandle(eventos[1]);
+	CloseHandle(hSwitchDados);
+	CloseHandle(hEsc);
 
 	printf("Processo de exibicao de dados encerrando sua execucao\n");
 	Sleep(3000);
