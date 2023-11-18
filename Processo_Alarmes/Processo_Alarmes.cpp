@@ -7,61 +7,42 @@
 #include <time.h>
 #include "CheckForError.h"; 
 
-
-
-HANDLE eventos[2];
-HANDLE Bloq_Alarmes;
-HANDLE Tecla_Esc;
-int Retorno = 0;
-int bloqueada = 0;
-int evento_atual = -1;
+HANDLE hEventos[2];
+HANDLE hSwitchAlarmes;
+HANDLE hEsc;
+int ret = 0;
 
 int main()
 {
 	
-	
-	Bloq_Alarmes = OpenEvent(EVENT_ALL_ACCESS, FALSE, "Alarmes");
-	if(Bloq_Alarmes == NULL) {
+	hSwitchAlarmes = OpenEvent(EVENT_ALL_ACCESS, FALSE, "Alarmes");
+	if(hSwitchAlarmes == NULL) {
 		printf("ERROR : %d", GetLastError());
 	}
-	Tecla_Esc = OpenEvent(EVENT_ALL_ACCESS, FALSE, "Esc");
-	if (Tecla_Esc == NULL)
+	hEsc = OpenEvent(EVENT_ALL_ACCESS, FALSE, "Esc");
+	if (hEsc == NULL)
 	{
 		printf("ERROR : %d", GetLastError());
 	}
-	eventos[0] = Tecla_Esc;
-	eventos[1] = Bloq_Alarmes;
-	do
-	{
-		
+	hEventos[0] = hEsc;
+	hEventos[1] = hSwitchAlarmes;
 
-		Sleep(1000);
-		Retorno = WaitForMultipleObjects(2, eventos, FALSE, 100);
-		evento_atual = Retorno - WAIT_OBJECT_0;
-		if (evento_atual == 0)
-		{
-			break;
-		}
-		if (evento_atual != 0 && Retorno != WAIT_TIMEOUT)
-		{
-			printf("Thread de alarmes desbloqueada\n");
+	printf("Thread de alarmes Inicializada\n");
 
-		}
-		else if (Retorno == WAIT_TIMEOUT)
-		{
+	while(1) {
+		ret = WaitForMultipleObjects(2, hEventos, FALSE, 0);
+		if (ret == WAIT_OBJECT_0) break;
+		if(ret == WAIT_OBJECT_0 + 1){
 			printf("Thread de alarmes Bloqueada\n");
+			ret = WaitForMultipleObjects(2, hEventos, FALSE, INFINITE);
+			if (ret == WAIT_OBJECT_0){
+				break;
+			}
+			printf("Thread de alarmes Desbloqueada\n");
 		}
-
-
-		
-		
-		
-		
-	} while (evento_atual != 0);
-	CloseHandle(Bloq_Alarmes);
-	CloseHandle(Tecla_Esc);
-	CloseHandle(eventos);
-
+	}
+	CloseHandle(hSwitchAlarmes);
+	CloseHandle(hEsc);
 
 	printf("Processo de Alarmes encerrando execucao\n");
 	Sleep(3000);
