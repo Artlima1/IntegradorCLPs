@@ -34,7 +34,8 @@
 #define N_ALARMES 5
 
 #define MSG_LIMITE 100
-/* ---------------------Struct para mensagem de dados ----------------------------- */
+
+/* --------------------- Struct para mensagem de dados ----------------------------- */
 typedef struct {
     int nseq;               // N�mero sequencial da mensagem
     int id;                 // Identifica��o do CLP
@@ -48,8 +49,6 @@ typedef struct {
 int nseq_msg = 0;
 int bloqueio = 0;
 HANDLE hMutex_nseq_msg;
-HANDLE hMutex_Verificaespaco;
-
 
 typedef struct {
     int nseq;                   // N�mero sequencial da mensagem
@@ -105,6 +104,7 @@ DWORD WINAPI Thread_Retirada_Mensagens();
 
 int encode_msg(mensagem_t* dados, char* msg);
 int encode_alarme(alarme_t* dados, char* alarme);
+DWORD wait_with_unbloqued_check(HANDLE * hEvents, char * threadName);
 
 /* --------------------------------------- Funcao Main ----------------------------------------- */
 
@@ -123,9 +123,6 @@ int main() {
 
     hSemProduzirMsg = CreateSemaphore(NULL, MSG_LIMITE, MSG_LIMITE, "SEM_PRODUZIR");
     CheckForError(hSemProduzirMsg);
-
-    hMutex_Verificaespaco = CreateMutex(NULL, FALSE, "Mutex_espaco");
-    CheckForError(hMutex_Verificaespaco);
 
 
     for (int i = 0; i < N_CLP_MENSAGENS; i++) {
@@ -168,121 +165,94 @@ int main() {
     CloseHandle(hMutexFilaMsg);
     CloseHandle(hSemConsumirMsg);
     CloseHandle(hSemProduzirMsg);
-    CloseHandle(hMutex_Verificaespaco);
 
     printf("Finalizando Processos CLPs\n");
-    Sleep(3000);
 }
 
 /* --------------------------------------- Threads ----------------------------------------- */
 
 DWORD WINAPI Thread_CLP_Mensagens(int index) {
     srand(GetCurrentThreadId());
-    DWORD Retorno;
+    DWORD ret;
     mensagem_t msg;
     char msg_str[MSG_TAM_TOT + MSG_TAM_TOT];
-    HANDLE hBloq[2];
-    HANDLE hNSeq[2];
-    HANDLE hFila[2];
-    HANDLE hProduzir[2];
+    HANDLE hEsc, hSwitch;
+    HANDLE hNSeq[3];
+    HANDLE hFila[3];
+    HANDLE hProduzir[3];
     int evento_atual = -1;
     
+    char sNomeThread[9];
+    snprintf(sNomeThread, 9, "Leitura%d", index + 1);
 
-    char BloqLeitura_Nome[9];
-    snprintf(BloqLeitura_Nome, 9, "Leitura%d", index + 1);
-
-    hBloq[0] = OpenEvent(EVENT_ALL_ACCESS, FALSE, "Esc");
-    if (hBloq[0] == NULL) {
+    hEsc = OpenEvent(EVENT_ALL_ACCESS, FALSE, "Esc");
+    if (hEsc == NULL) {
         printf("ERROR : %d", GetLastError());
     }
-    hBloq[1] = OpenEvent(EVENT_ALL_ACCESS, FALSE, BloqLeitura_Nome);
-    if (hBloq[1] == NULL) {
+    hSwitch = OpenEvent(EVENT_ALL_ACCESS, FALSE, sNomeThread);
+    if (hSwitch == NULL) {
         printf("ERROR : %d", GetLastError());
     }
 
-    hNSeq[0] = hBloq[0];
-    hNSeq[1] = hMutex_nseq_msg;
+    hNSeq[0] = hEsc;
+    hNSeq[1] = hSwitch;
+    hNSeq[2] = hMutex_nseq_msg;
 
-    hFila[0] = hBloq[0];
-    hFila[1] = hMutexFilaMsg;
+    hFila[0] = hEsc;
+    hFila[1] = hSwitch;
+    hFila[2] = hMutexFilaMsg;
 
-    hProduzir[0] = hBloq[0];
-    hProduzir[1] = hSemProduzirMsg;
+    hProduzir[0] = hEsc;
+    hProduzir[1] = hSwitch;
+    hProduzir[2] = hSemProduzirMsg;
 
-    do {
-        /* Verificar se está bloqueada */
-        Retorno = WaitForMultipleObjects(2, hBloq, FALSE, 100);
-        evento_atual = Retorno - WAIT_OBJECT_0;
-        if (evento_atual == 0) 
-        {
-            break;
+    while(1) {
+        /* Verificar se há espaço disponivel na fila */
+        ret = wait_with_unbloqued_check(hFila, sNomeThread); /* Aguarda estar desbloqueado e ter o mutex da fila */
+        if(ret != 0) break; /* Esc pressionado */
+        if (total_mensagem == MSG_LIMITE){
+            printf("Fila cheia\n");
         }
-        if(evento_atual != 0 && Retorno != WAIT_TIMEOUT)
-        {      /* Verificar se há espaço disponivel na fila */
-                WaitForSingleObject(hMutex_Verificaespaco, INFINITE);
-                if (total_mensagem == MSG_LIMITE)
-                {
-                    printf("Fila cheia\n");
-                }
-                ReleaseMutex(hMutex_Verificaespaco);
+        ReleaseMutex(hMutexFilaMsg);
+        ret = wait_with_unbloqued_check(hProduzir, sNomeThread); /* Aguarda estar desbloqueado e semáforo de producao */
+        if(ret != 0) break; /* Esc pressionado */
 
-               
-                Retorno = WaitForMultipleObjects(2, hProduzir, FALSE, INFINITE);
-                evento_atual = Retorno - WAIT_OBJECT_0;
-                if (evento_atual == 0) {
-                    break;
-                }
+        /* Produzir dados da mensagem */
+        ret = wait_with_unbloqued_check(hNSeq, sNomeThread); /* Aguarda estar desbloqueado e ter o mutex do nSeq */
+        if(ret != 0) break; /* Esc pressionado */
 
-                /* Produzir dados da mensagem */
-                Retorno = WaitForMultipleObjects(2, hNSeq, FALSE, INFINITE);
-                evento_atual = Retorno - WAIT_OBJECT_0;
-                if (evento_atual == 0) {
-                    break;
-                }
+        msg.nseq = nseq_msg++;
+        if (nseq_msg > NSEQ_MAX) nseq_msg = 0;
+        ReleaseMutex(hMutex_nseq_msg);
 
-                msg.nseq = nseq_msg++;
-                if (nseq_msg > NSEQ_MAX) nseq_msg = 0;
-                ReleaseMutex(hMutex_nseq_msg);
+        msg.id = index + 1;
+        msg.diag = rand() % 99;
+        msg.pressao_interna = (msg.diag == 55) ? 0 : (rand() % 99999 / 10.0);
+        msg.pressao_injecao = (msg.diag == 55) ? 0 : (rand() % 99999 / 10.0);
+        msg.temp = (msg.diag == 55) ? 0 : (rand() % 99999 / 10.0);
+        GetLocalTime(&msg.timestamp);
 
-                msg.id = index + 1;
-                msg.diag = rand() % 99;
-                msg.pressao_interna = (msg.diag == 55) ? 0 : (rand() % 99999 / 10.0);
-                msg.pressao_injecao = (msg.diag == 55) ? 0 : (rand() % 99999 / 10.0);
-                msg.temp = (msg.diag == 55) ? 0 : (rand() % 99999 / 10.0);
-                GetLocalTime(&msg.timestamp);
+        /* Transformar dados em string separada por ; */
+        encode_msg(&msg, msg_str);
+        printf("Mensagem Gerada: %s\n", msg_str);
 
-                /* Transformar dados em string separada por ; */
-                encode_msg(&msg, msg_str);
-                printf("Mensagem Gerada: %s\n", msg_str);
-                WaitForSingleObject(hMutex_Verificaespaco, INFINITE);
-                total_mensagem++;
-                ReleaseMutex(hMutex_Verificaespaco);
+        /* Inserir na Fila de Mensagens e notificar mensagem a ser consumida */
+        ret = wait_with_unbloqued_check(hFila, sNomeThread); /* Aguarda estar desbloqueado e ter o mutex da fila */
+        if(ret != 0) break; /* Esc pressionado */
+        total_mensagem++;
+        memcpy(&fila_msg[pos_livre].msg, msg_str, MSG_TAM_TOT);
+        pos_livre = (pos_livre + 1) % MSG_LIMITE;
+        ReleaseMutex(hMutexFilaMsg);
+        ReleaseSemaphore(hSemConsumirMsg, 1, NULL);
 
-                /* Inserir na Fila de Mensagens e notificar mensagem a ser consumida*/
-                Retorno = WaitForMultipleObjects(2, hFila, FALSE, INFINITE);
-                evento_atual = Retorno - WAIT_OBJECT_0;
-                if (evento_atual == 0) {
-                    break;
-                }
-                memcpy(&fila_msg[pos_livre].msg, msg_str, MSG_TAM_TOT);
-                pos_livre = (pos_livre + 1) % MSG_LIMITE;
-                ReleaseMutex(hMutexFilaMsg);
-                ReleaseSemaphore(hSemConsumirMsg, 1, NULL);
+        /* Dormir por 1 a 5 segundos (aleatorio) */
+        Sleep(1000 + (rand() % 4000));
 
-                /* Dormir por 1 a 5 segundos (aleatorio) */
-                Sleep(1000 + (rand() % 4000));
-            
-        }
-        if (Retorno == WAIT_TIMEOUT)
-        {
-            printf("Thread de leitura de CLPs %d de mensagens bloqueada\n", index+1);
-            Sleep(1000);
-        }
+    }
 
-    } while (evento_atual != 0);
+    CloseHandle(hEsc);
+    CloseHandle(hSwitch);
 
-    CloseHandle(hBloq[0]);
-    CloseHandle(hBloq[1]);
     printf("Thread Leitura%d foi finalizada\n", index + 1);
     return (0);
 }
@@ -290,10 +260,11 @@ DWORD WINAPI Thread_CLP_Mensagens(int index) {
 DWORD WINAPI Thread_CLP_Monitoracao() 
 {
     srand(GetCurrentThreadId());
-    DWORD Retorno;
+    DWORD ret;
     int evento_atual = -1;
     alarme_t alarme;
     char alarme_str[ALARME_TAM_TOT+ALARME_TAM_TOT];
+    
     HANDLE hBloq[2];
     hBloq[0] = OpenEvent(EVENT_ALL_ACCESS, FALSE, "Esc");
     if (hBloq[0] == NULL) 
@@ -305,35 +276,31 @@ DWORD WINAPI Thread_CLP_Monitoracao()
         printf("ERROR : %d", GetLastError());
     }
 
-    do 
-    {
+    while(1) {
 
-        Retorno = WaitForMultipleObjects(2, hBloq, FALSE, 100);
-        evento_atual = Retorno - WAIT_OBJECT_0;
-        if (evento_atual == 0) {
-            break;
-        }
-        if (evento_atual != 0 && Retorno != WAIT_TIMEOUT) {
+        ret = WaitForMultipleObjects(2, hBloq, FALSE, 0);
+		if (ret == WAIT_OBJECT_0) break;
+		if(ret == WAIT_OBJECT_0 + 1){
+			printf("Thread de monitoração Bloqueada\n");
+			ret = WaitForMultipleObjects(2, hBloq, FALSE, INFINITE);
+			if (ret == WAIT_OBJECT_0){
+				break;
+			}
+			printf("Thread de monitoração Desbloqueada\n");
+		}
 
+        alarme.nseq = nseq_alarme++;
+        if (nseq_msg > NSEQ_MAX) nseq_alarme = 0;
 
-            alarme.nseq = nseq_alarme++;
-            if (nseq_msg > NSEQ_MAX) nseq_alarme = 0;
+        strcpy_s(alarme.id, ALARME_ID_TAM + 1, lista_alarmes[rand() % N_ALARMES].id);
+        GetLocalTime(&alarme.timestamp);
 
-            strcpy_s(alarme.id, ALARME_ID_TAM + 1, lista_alarmes[rand() % N_ALARMES].id);
-            GetLocalTime(&alarme.timestamp);
+        encode_alarme(&alarme, alarme_str);
+        printf("Alarme Gerado: %s\n", alarme_str);
 
-            encode_alarme(&alarme, alarme_str);
-            printf("Alarme Gerado: %s\n", alarme_str);
+        Sleep(1000 + (rand() % 4000));
 
-            Sleep(1000 + (rand() % 4000));
-        }
-        if (Retorno == WAIT_TIMEOUT)
-        {
-            printf("Thread de monitoracao de alarmes bloqueada\n");
-            Sleep(1000);
-        }
-
-    } while (evento_atual != 0);
+    }
 
     CloseHandle(hBloq[0]);
     CloseHandle(hBloq[1]);
@@ -342,85 +309,54 @@ DWORD WINAPI Thread_CLP_Monitoracao()
 }
 
 DWORD WINAPI Thread_Retirada_Mensagens() {
-    DWORD Retorno;
-    HANDLE hBloq[2];
-    HANDLE hFila[2];
-    HANDLE hConsumir[2];
+    DWORD ret;
+    HANDLE hEsc, hSwitchRetirada;
+    HANDLE hFila[3];
+    HANDLE hConsumir[3];
     msg_na_fila_t msg;
     int evento_atual = -1;
+    char sNomeThread[] = "RetiradaMensagens";
 
-    hBloq[0] = OpenEvent(EVENT_ALL_ACCESS, FALSE, "Esc");
-    if (hBloq[0] == NULL) {
+    hEsc = OpenEvent(EVENT_ALL_ACCESS, FALSE, "Esc");
+    if (hEsc == NULL) {
         printf("ERROR : %d", GetLastError());
     }
-    hBloq[1] = OpenEvent(EVENT_ALL_ACCESS, FALSE, "Retirada");
-    if (hBloq[1] == NULL) {
+    hSwitchRetirada = OpenEvent(EVENT_ALL_ACCESS, FALSE, "Retirada");
+    if (hSwitchRetirada == NULL) {
         printf("ERROR : %d", GetLastError());
     }
 
-    hFila[0] = hBloq[0];
-    hFila[1] = hMutexFilaMsg;
+    hFila[0] = hEsc;
+    hFila[1] = hSwitchRetirada;
+    hFila[2] = hMutexFilaMsg;
 
-    hConsumir[0] = hBloq[0];
-    hConsumir[1] = hSemConsumirMsg;
+    hConsumir[0] = hEsc;
+    hConsumir[1] = hSwitchRetirada;
+    hConsumir[2] = hSemConsumirMsg;
 
 
-    do 
-    {
-        /* Verifica se esta bloqueada */
-        Retorno = WaitForMultipleObjects(2, hBloq, FALSE, 500);
-        evento_atual = Retorno - WAIT_OBJECT_0;
-        if (evento_atual == 0) 
-        {
-            break;
-        }
-        else if (Retorno == WAIT_TIMEOUT)
-        {
-            printf("Thread de retirada bloqueada\n");
-            Sleep(2000);
-        }
-        else if (evento_atual != 0 && Retorno != WAIT_TIMEOUT)
-        {
-            /* Aguarda haver mensagem a ser consumida */
-            Retorno= WaitForMultipleObjects(2, hConsumir, FALSE, INFINITE);
-            evento_atual = Retorno - WAIT_OBJECT_0;
-            if (evento_atual == 0) 
-            {
-                break;
-            }
-           
-                else
-                {
+    while(1) {
+        /* Aguarda haver mensagem a ser consumida */
+        ret = wait_with_unbloqued_check(hConsumir, sNomeThread); /* Aguarda estar desbloqueado e semáforo de consumo */
+        if(ret != 0) break; /* Esc pressionado */
+    
+        ret = wait_with_unbloqued_check(hFila, sNomeThread); /* Aguarda estar desbloqueado e semáforo de consumo */
+        if(ret != 0) break; /* Esc pressionado */
+        memcpy(&msg.msg, &fila_msg[pos_ocupada].msg, MSG_TAM_TOT);
+        pos_ocupada = (pos_ocupada + 1) % MSG_LIMITE;
+        total_mensagem--;
+        ReleaseMutex(hMutexFilaMsg);
 
-                    /* Consome mensagem */
-                    Retorno = WaitForMultipleObjects(2, hFila, FALSE, INFINITE);
-                    evento_atual = Retorno - WAIT_OBJECT_0;
-                    if (evento_atual == 0) {
-                        break;
-                    }
-                    else
-                    {
-                        memcpy(&msg.msg, &fila_msg[pos_ocupada].msg, MSG_TAM_TOT);
-                        pos_ocupada = (pos_ocupada + 1) % MSG_LIMITE;
-                        ReleaseMutex(hMutexFilaMsg);
-                        WaitForSingleObject(hMutex_Verificaespaco, INFINITE);
-                        total_mensagem--;
-                        ReleaseMutex(hMutex_Verificaespaco);
-                        /* Trata mensagem */
-                        msg.msg[MSG_TAM_TOT] = '\0';
-                        printf("Mensagem Retirada: %s\n", msg.msg);
-                        /* Libera producao */
-                        ReleaseSemaphore(hSemProduzirMsg, 1, NULL);
-                    }
-                }
-                
-            }
-        
+        /* Trata mensagem */
+        msg.msg[MSG_TAM_TOT] = '\0';
+        printf("Mensagem Retirada: %s\n", msg.msg);
 
-    } while (evento_atual != 0);
+        /* Libera producao */
+        ReleaseSemaphore(hSemProduzirMsg, 1, NULL);
+    }
 
-    CloseHandle(hBloq[0]);
-    CloseHandle(hBloq[1]);
+    CloseHandle(hEsc);
+    CloseHandle(hSwitchRetirada);
     printf("Thread Retirada foi finalizada\n");
     return (0);
 }
@@ -508,3 +444,31 @@ int encode_alarme(alarme_t* dados, char* alarme){
 
     return 1;
 }
+
+DWORD wait_with_unbloqued_check(HANDLE * hEvents, char * threadName){
+    DWORD ret = 0;
+
+    do{
+        ret = WaitForMultipleObjects(3, hEvents, FALSE, INFINITE);
+        if (ret == WAIT_OBJECT_0) break; /* Esc pressionado */
+        if(ret == WAIT_OBJECT_0 + 1){ /* Tecla pressionada */
+            printf("Thread %s Bloqueada\n", threadName);
+            ret = WaitForMultipleObjects(2, hEvents, FALSE, INFINITE); /* Aguarda pressionar tecla novamente */
+            if (ret == WAIT_OBJECT_0){
+                break;
+            }
+            printf("Thread %s Desbloqueada\n", threadName);
+        }
+    } while (ret != WAIT_OBJECT_0 + 2); /* Volta a aguardar handle quando desbloqueada */
+
+    if(ret == WAIT_OBJECT_0 + 2){
+        return 0;
+    }
+    else {
+        return 1;
+    }
+}
+
+
+
+

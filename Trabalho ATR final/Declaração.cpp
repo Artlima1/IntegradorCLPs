@@ -124,6 +124,7 @@ int main()
 	{
 		CheckForError(Retorno);
 	}
+	Sleep(2000);
 
 	/* Fechamento dos handles dos eventos */
 	CloseHandle(hSwitchDados);
