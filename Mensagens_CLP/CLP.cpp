@@ -103,6 +103,7 @@ DWORD WINAPI Thread_CLP_Monitoracao();
 DWORD WINAPI Thread_Retirada_Mensagens();
 
 int encode_msg(mensagem_t* dados, char* msg);
+int decode_msg(char * msg, mensagem_t * dados);
 int encode_alarme(alarme_t* dados, char* alarme);
 DWORD wait_with_unbloqued_check(HANDLE * hEvents, char * threadName);
 
@@ -314,6 +315,7 @@ DWORD WINAPI Thread_Retirada_Mensagens() {
     HANDLE hFila[3];
     HANDLE hConsumir[3];
     msg_na_fila_t msg;
+    mensagem_t msg_data;
     int evento_atual = -1;
     char sNomeThread[] = "RetiradaMensagens";
 
@@ -348,8 +350,18 @@ DWORD WINAPI Thread_Retirada_Mensagens() {
         ReleaseMutex(hMutexFilaMsg);
 
         /* Trata mensagem */
-        msg.msg[MSG_TAM_TOT] = '\0';
-        printf("Mensagem Retirada: %s\n", msg.msg);
+        decode_msg(msg.msg, &msg_data);
+        printf("Mensagem Retirada: %d %d %d %f %f %f %d %d %d\n",
+            msg_data.nseq,
+            msg_data.id,
+            msg_data.diag,
+            msg_data.pressao_interna,
+            msg_data.pressao_injecao,
+            msg_data.temp,
+            msg_data.timestamp.wHour,
+            msg_data.timestamp.wMinute,
+            msg_data.timestamp.wSecond
+        );
 
         /* Libera producao */
         ReleaseSemaphore(hSemProduzirMsg, 1, NULL);
@@ -443,6 +455,56 @@ int encode_alarme(alarme_t* dados, char* alarme){
     alarme[pos_atual] = '\0';
 
     return 1;
+}
+
+int decode_msg(char * msg, mensagem_t * dados){
+    char string_dado[20];
+    int pos_atual=0;
+    
+    strncpy_s(string_dado, 20, &msg[pos_atual], MSG_NSEQ_TAM);
+    string_dado[MSG_NSEQ_TAM] = '\0';
+    dados->nseq = atoi(string_dado);
+    pos_atual += MSG_NSEQ_TAM + 1;
+
+    strncpy_s(string_dado, 20, &msg[pos_atual], MSG_ID_TAM);
+    string_dado[MSG_ID_TAM] = '\0';
+    dados->id = atoi(string_dado);
+    pos_atual += MSG_ID_TAM + 1;
+
+    strncpy_s(string_dado, 20, &msg[pos_atual], MSG_DIAG_TAM);
+    string_dado[MSG_DIAG_TAM] = '\0';
+    dados->diag = atoi(string_dado);
+    pos_atual += MSG_DIAG_TAM + 1;
+
+    strncpy_s(string_dado, 20, &msg[pos_atual], MSG_PRES_INTERNA_TAM);
+    string_dado[MSG_PRES_INTERNA_TAM] = '\0';
+    dados->pressao_interna = atof(string_dado);
+    pos_atual += MSG_PRES_INTERNA_TAM + 1;
+
+    strncpy_s(string_dado, 20, &msg[pos_atual], MSG_PRES_INJECAO_TAM);
+    string_dado[MSG_PRES_INJECAO_TAM] = '\0';
+    dados->pressao_injecao = atof(string_dado);
+    pos_atual += MSG_PRES_INJECAO_TAM + 1;
+
+    strncpy_s(string_dado, 20, &msg[pos_atual], MSG_TEMP_TAM);
+    string_dado[MSG_TEMP_TAM] = '\0';
+    dados->temp = atof(string_dado);
+    pos_atual += MSG_TEMP_TAM + 1;
+
+    strncpy_s(string_dado, 20, &msg[pos_atual], 2);
+    string_dado[MSG_TEMP_TAM] = '\0';
+    dados->timestamp.wHour = atoi(string_dado);
+    pos_atual += 3;
+
+    strncpy_s(string_dado, 20, &msg[pos_atual], 2);
+    string_dado[MSG_TEMP_TAM] = '\0';
+    dados->timestamp.wMinute = atoi(string_dado);
+    pos_atual += 3;
+
+    strncpy_s(string_dado, 20, &msg[pos_atual], 2);
+    string_dado[MSG_TEMP_TAM] = '\0';
+    dados->timestamp.wSecond = atoi(string_dado);
+    pos_atual += 3;
 }
 
 DWORD wait_with_unbloqued_check(HANDLE * hEvents, char * threadName){
