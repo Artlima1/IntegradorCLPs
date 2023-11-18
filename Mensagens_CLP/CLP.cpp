@@ -60,7 +60,7 @@ int nseq_alarme = 0;
 
 typedef struct {
     char id[ALARME_ID_TAM + 1];
-    char descricao[50];
+    char descricao[100];
 } alarme_code_t;
 
 alarme_code_t lista_alarmes[N_ALARMES] = {
@@ -69,7 +69,6 @@ alarme_code_t lista_alarmes[N_ALARMES] = {
     {"Q2", "Baixa pressao de injecao do nitrogenio"},
     {"C4", "Concentracao baixa de carbono no sistema"},
     {"C6", "Concentracao baixa de silicio no sistema"},
-
 };
 
 /* ----------------------- Estrutura Lista Circular de Mensagens -------------------------------------- */
@@ -103,8 +102,9 @@ DWORD WINAPI Thread_CLP_Monitoracao();
 DWORD WINAPI Thread_Retirada_Mensagens();
 
 int encode_msg(mensagem_t* dados, char* msg);
-int decode_msg(char * msg, mensagem_t * dados);
 int encode_alarme(alarme_t* dados, char* alarme);
+int decode_msg(char * msg, mensagem_t * dados);
+int decode_alarme(char * msg, alarme_t * dados);
 DWORD wait_with_unbloqued_check(HANDLE * hEvents, char * threadName);
 
 /* --------------------------------------- Funcao Main ----------------------------------------- */
@@ -265,6 +265,8 @@ DWORD WINAPI Thread_CLP_Monitoracao()
     int evento_atual = -1;
     alarme_t alarme;
     char alarme_str[ALARME_TAM_TOT+ALARME_TAM_TOT];
+    alarme_code_t exemplo_cod; /* RETIRAR DEPOIS */
+    alarme_t exemplo_data; /* RETIRAR DEPOIS */
     
     HANDLE hBloq[2];
     hBloq[0] = OpenEvent(EVENT_ALL_ACCESS, FALSE, "Esc");
@@ -298,6 +300,16 @@ DWORD WINAPI Thread_CLP_Monitoracao()
 
         encode_alarme(&alarme, alarme_str);
         printf("Alarme Gerado: %s\n", alarme_str);
+
+        /* Exemplo decode RETIRAR DEPOIS*/
+        decode_alarme(alarme_str, &exemplo_data);
+        printf("Decoded: %d %s %d:%d:%d\n", exemplo_data.nseq, exemplo_data.id, exemplo_data.timestamp.wHour, exemplo_data.timestamp.wMinute, exemplo_data.timestamp.wSecond);
+        for(int i=0; i<N_ALARMES; i++){
+            if(strcmp(exemplo_data.id, lista_alarmes[i].id) == 0){
+                memcpy(&exemplo_cod, &lista_alarmes[i], sizeof(alarme_code_t));
+            }
+        }
+        printf("ALARME %s, %s\n", exemplo_cod.id, exemplo_cod.descricao);
 
         Sleep(1000 + (rand() % 4000));
 
@@ -490,6 +502,37 @@ int decode_msg(char * msg, mensagem_t * dados){
     string_dado[MSG_TEMP_TAM] = '\0';
     dados->temp = atof(string_dado);
     pos_atual += MSG_TEMP_TAM + 1;
+
+    strncpy_s(string_dado, 20, &msg[pos_atual], 2);
+    string_dado[MSG_TEMP_TAM] = '\0';
+    dados->timestamp.wHour = atoi(string_dado);
+    pos_atual += 3;
+
+    strncpy_s(string_dado, 20, &msg[pos_atual], 2);
+    string_dado[MSG_TEMP_TAM] = '\0';
+    dados->timestamp.wMinute = atoi(string_dado);
+    pos_atual += 3;
+
+    strncpy_s(string_dado, 20, &msg[pos_atual], 2);
+    string_dado[MSG_TEMP_TAM] = '\0';
+    dados->timestamp.wSecond = atoi(string_dado);
+    pos_atual += 3;
+}
+
+int decode_alarme(char * msg, alarme_t * dados){
+    char string_dado[20];
+    int pos_atual=0;
+    
+    strncpy_s(string_dado, 20, &msg[pos_atual], ALARME_NSEQ_TAM);
+    string_dado[ALARME_NSEQ_TAM] = '\0';
+    dados->nseq = atoi(string_dado);
+    pos_atual += ALARME_NSEQ_TAM + 1;
+
+    strncpy_s(string_dado, 20, &msg[pos_atual], ALARME_ID_TAM);
+    string_dado[ALARME_ID_TAM] = '\0';
+    strncpy_s(dados->id, ALARME_ID_TAM+1, &msg[pos_atual], ALARME_ID_TAM);
+    dados->id[ALARME_ID_TAM] = '\0';
+    pos_atual += ALARME_ID_TAM + 1;
 
     strncpy_s(string_dado, 20, &msg[pos_atual], 2);
     string_dado[MSG_TEMP_TAM] = '\0';
