@@ -82,6 +82,13 @@ HANDLE hSemConsumirMsg;
 HANDLE hSemProduzirMsg;
 int total_mensagem = 0;
 
+/* ------------------------------------- Estrutura Timers -------------------------------------- */
+#define MS_PARA_10NS 10000
+#define INTERVAL_CLPS 500 // ms
+#define STARTUP_TIME_CLPS 2000 //ms
+
+HANDLE hTimerCLP[N_CLP_MENSAGENS];
+
 /* ------------------------------------ Estrutura para os eventos -------------------------------------- */
 
 HANDLE ThreadsCLP[N_CLP_MENSAGENS + 1];
@@ -112,6 +119,8 @@ DWORD wait_with_unbloqued_check(HANDLE * hEvents, char * threadName);
 int main() {
     DWORD Retorno;
     DWORD ThreadID;
+    LARGE_INTEGER Preset;
+    BOOL bRet;
 
     hMutex_nseq_msg = CreateMutex(NULL, FALSE, "MUTEX_NSEQ_MSG");
     CheckForError(hMutex_nseq_msg);
@@ -124,16 +133,29 @@ int main() {
 
     hSemProduzirMsg = CreateSemaphore(NULL, MSG_LIMITE, MSG_LIMITE, "SEM_PRODUZIR");
     CheckForError(hSemProduzirMsg);
+    
 
-
+    char sNomeTimer[15];
     for (int i = 0; i < N_CLP_MENSAGENS; i++) {
+
+        /* Cria timer com reset autom�tico */
+        snprintf(sNomeTimer, 15, "TimerCLP%d", i + 1);
+        hTimerCLP[i] = CreateWaitableTimer(NULL, FALSE, sNomeTimer);
+        CheckForError(hTimerCLP[i]);
+
+        /* Cria Thread */
         ThreadsCLP[i] = (HANDLE)_beginthreadex(NULL, 0, (CAST_FUNCTION)Thread_CLP_Mensagens, (LPVOID)(INT_PTR)i, 0, (CAST_LPDWORD)&ThreadID);
         if (ThreadsCLP[i] != (HANDLE)-1L) {
-            printf("Thread Criada %d com sucesso, ID = %0x\n", i, ThreadID);
+            printf("Thread CLP%d Criada com sucesso, ID = %0x\n", i+1, ThreadID);
         } else {
-            printf("Erro na criacao da thread Cliente! N = %d Codigo = %d\n", i, errno);
+            printf("Erro na criacao da thread CLP%d Codigo = %d\n", i+1, errno);
             exit(0);
         }
+
+        /* Dispara timer periodico após tempo de startup */
+        Preset.QuadPart = -(STARTUP_TIME_CLPS * MS_PARA_10NS);
+        bRet = SetWaitableTimer(hTimerCLP[i], &Preset, INTERVAL_CLPS, NULL, NULL, FALSE);
+        CheckForError(bRet);
     }
 
     ThreadsCLP[INDEX_CLP_MONITORACAO] = (HANDLE)_beginthreadex(NULL, 0, (CAST_FUNCTION)Thread_CLP_Monitoracao, NULL, 0, (CAST_LPDWORD)&ThreadID);
@@ -173,15 +195,15 @@ int main() {
 /* --------------------------------------- Threads ----------------------------------------- */
 
 DWORD WINAPI Thread_CLP_Mensagens(int index) {
-    srand(GetCurrentThreadId());
     DWORD ret;
     mensagem_t msg;
     char msg_str[MSG_TAM_TOT + MSG_TAM_TOT];
+
     HANDLE hEsc, hSwitch;
+    HANDLE hTimer[3];
     HANDLE hNSeq[3];
     HANDLE hFila[3];
     HANDLE hProduzir[3];
-    int evento_atual = -1;
     
     char sNomeThread[9];
     snprintf(sNomeThread, 9, "Leitura%d", index + 1);
@@ -195,6 +217,10 @@ DWORD WINAPI Thread_CLP_Mensagens(int index) {
         printf("ERROR : %d", GetLastError());
     }
 
+    hTimer[0] = hEsc;
+    hTimer[1] = hSwitch;
+    hTimer[2] = hTimerCLP[index];
+    
     hNSeq[0] = hEsc;
     hNSeq[1] = hSwitch;
     hNSeq[2] = hMutex_nseq_msg;
@@ -208,6 +234,10 @@ DWORD WINAPI Thread_CLP_Mensagens(int index) {
     hProduzir[2] = hSemProduzirMsg;
 
     while(1) {
+        /* Aguarda Temporizacao */
+        ret = wait_with_unbloqued_check(hTimer, sNomeThread);
+        if(ret != 0) break; /* Esc pressionado */
+
         /* Verificar se há espaço disponivel na fila */
         ret = wait_with_unbloqued_check(hFila, sNomeThread); /* Aguarda estar desbloqueado e ter o mutex da fila */
         if(ret != 0) break; /* Esc pressionado */
@@ -245,10 +275,6 @@ DWORD WINAPI Thread_CLP_Mensagens(int index) {
         pos_livre = (pos_livre + 1) % MSG_LIMITE;
         ReleaseMutex(hMutexFilaMsg);
         ReleaseSemaphore(hSemConsumirMsg, 1, NULL);
-
-        /* Dormir por 1 a 5 segundos (aleatorio) */
-        Sleep(1000 + (rand() % 4000));
-
     }
 
     CloseHandle(hEsc);
