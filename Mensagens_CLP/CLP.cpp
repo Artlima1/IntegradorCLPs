@@ -84,10 +84,16 @@ int total_mensagem = 0;
 
 /* ------------------------------------- Estrutura Timers -------------------------------------- */
 #define MS_PARA_10NS 10000
-#define INTERVAL_CLPS 500 // ms
-#define STARTUP_TIME_CLPS 2000 //ms
+#define STARTUP_TIME_TIMERS 2000 //ms
+
+#define INTERVAL_CLPS_TIMERS 500 // ms
+
+#define INTERVAL_MONIT_TIMER_MIN 1000 // ms
+#define INTERVAL_MONIT_TIMER_MAX 5000 // ms
+#define INTERVAL_MONIT_TIMER (INTERVAL_MONIT_TIMER_MIN + (rand() % INTERVAL_MONIT_TIMER_MAX))
 
 HANDLE hTimerCLP[N_CLP_MENSAGENS];
+HANDLE hTimerMonit;
 
 /* ------------------------------------ Estrutura para os eventos -------------------------------------- */
 
@@ -119,7 +125,7 @@ DWORD wait_with_unbloqued_check(HANDLE * hEvents, char * threadName);
 int main() {
     DWORD Retorno;
     DWORD ThreadID;
-    LARGE_INTEGER Preset;
+    LARGE_INTEGER PresetTimerCLP, PresetTimerMonit;
     BOOL bRet;
 
     hMutex_nseq_msg = CreateMutex(NULL, FALSE, "MUTEX_NSEQ_MSG");
@@ -133,8 +139,8 @@ int main() {
 
     hSemProduzirMsg = CreateSemaphore(NULL, MSG_LIMITE, MSG_LIMITE, "SEM_PRODUZIR");
     CheckForError(hSemProduzirMsg);
-    
 
+    /* Criação dos CLPs de leitura */
     char sNomeTimer[15];
     for (int i = 0; i < N_CLP_MENSAGENS; i++) {
 
@@ -153,19 +159,27 @@ int main() {
         }
 
         /* Dispara timer periodico após tempo de startup */
-        Preset.QuadPart = -(STARTUP_TIME_CLPS * MS_PARA_10NS);
-        bRet = SetWaitableTimer(hTimerCLP[i], &Preset, INTERVAL_CLPS, NULL, NULL, FALSE);
+        PresetTimerCLP.QuadPart = -(STARTUP_TIME_TIMERS * MS_PARA_10NS);
+        bRet = SetWaitableTimer(hTimerCLP[i], &PresetTimerCLP, INTERVAL_CLPS_TIMERS, NULL, NULL, FALSE);
         CheckForError(bRet);
     }
 
+    /* Criacao do CLP de monitoracao */
+    hTimerMonit = CreateWaitableTimer(NULL, FALSE, "TimerMonitoracao");
+    CheckForError(hTimerMonit);
     ThreadsCLP[INDEX_CLP_MONITORACAO] = (HANDLE)_beginthreadex(NULL, 0, (CAST_FUNCTION)Thread_CLP_Monitoracao, NULL, 0, (CAST_LPDWORD)&ThreadID);
     if (ThreadsCLP[INDEX_CLP_MONITORACAO] != (HANDLE)-1L) {
         printf("Thread Monitoracao Criada com sucesso, ID = %0x\n", ThreadID);
     } else {
-        printf("Erro na criacao da thread Monitoracao! Codigo = %d\n", errno);
+        printf("Erro na criacao da ThreadMonitoracao! Codigo = %d\n", errno);
         exit(0);
     }
+    /* Dispara timer de disparo único após tempo de startup */
+    PresetTimerMonit.QuadPart = -(STARTUP_TIME_TIMERS * MS_PARA_10NS);
+    bRet = SetWaitableTimer(hTimerMonit, &PresetTimerMonit, 0, NULL, NULL, FALSE);
+    CheckForError(bRet);
 
+    /* Criacao da thread retirada de mensagens */
     ThreadsCLP[INDEX_RETIRADA] = (HANDLE)_beginthreadex(NULL, 0, (CAST_FUNCTION)Thread_Retirada_Mensagens, NULL, 0, (CAST_LPDWORD)&ThreadID);
     if (ThreadsCLP[INDEX_RETIRADA] != (HANDLE)-1L) {
         printf("Thread Retirada Criada com sucesso, ID = %0x\n", ThreadID);
@@ -174,7 +188,8 @@ int main() {
         exit(0);
     }
 
-    Retorno = WaitForMultipleObjects(INDEX_RETIRADA + 1, ThreadsCLP, TRUE, INFINITE);  // Fun��o de espera do fechamento das threads
+    /* Espera do fechamento das threads */
+    Retorno = WaitForMultipleObjects(INDEX_RETIRADA + 1, ThreadsCLP, TRUE, INFINITE); 
     if (Retorno != WAIT_OBJECT_0)                                                      
     {
         CheckForError(Retorno);
@@ -183,6 +198,10 @@ int main() {
     for (int i = 0; i < INDEX_RETIRADA + 1; i++) {
         CloseHandle(ThreadsCLP[i]);
     }
+    for(int i = 0; i < N_CLP_MENSAGENS; i++){
+        CloseHandle(hTimerCLP[i]);
+    }
+    CloseHandle(hTimerMonit);
 
     CloseHandle(hMutex_nseq_msg);
     CloseHandle(hMutexFilaMsg);
@@ -287,36 +306,37 @@ DWORD WINAPI Thread_CLP_Mensagens(int index) {
 DWORD WINAPI Thread_CLP_Monitoracao() 
 {
     srand(GetCurrentThreadId());
+
     DWORD ret;
-    int evento_atual = -1;
-    alarme_t alarme;
+    HANDLE hEsc, hSwitch;
+    HANDLE hTimer[3];
     char alarme_str[ALARME_TAM_TOT+ALARME_TAM_TOT];
+    char sNomeThread[] = "ThreadMonitoracao";
+    alarme_t alarme;
+    LARGE_INTEGER PresetTimerMonit;
+
     alarme_code_t exemplo_cod; /* RETIRAR DEPOIS */
     alarme_t exemplo_data; /* RETIRAR DEPOIS */
     
-    HANDLE hBloq[2];
-    hBloq[0] = OpenEvent(EVENT_ALL_ACCESS, FALSE, "Esc");
-    if (hBloq[0] == NULL) 
+    hEsc = OpenEvent(EVENT_ALL_ACCESS, FALSE, "Esc");
+    if (hEsc == NULL) 
     {
         printf("ERROR : %d", GetLastError());
     }
-    hBloq[1] = OpenEvent(EVENT_ALL_ACCESS, FALSE, "Monitoracao");
-    if (hBloq[1] == NULL) {
+    hSwitch = OpenEvent(EVENT_ALL_ACCESS, FALSE, "Monitoracao");
+    if (hSwitch == NULL) {
         printf("ERROR : %d", GetLastError());
     }
 
+    hTimer[0] = hEsc;
+    hTimer[1] = hSwitch;
+    hTimer[2] = hTimerMonit;
+
     while(1) {
 
-        ret = WaitForMultipleObjects(2, hBloq, FALSE, 0);
-		if (ret == WAIT_OBJECT_0) break;
-		if(ret == WAIT_OBJECT_0 + 1){
-			printf("Thread de monitoração Bloqueada\n");
-			ret = WaitForMultipleObjects(2, hBloq, FALSE, INFINITE);
-			if (ret == WAIT_OBJECT_0){
-				break;
-			}
-			printf("Thread de monitoração Desbloqueada\n");
-		}
+        /* Aguarda Temporizacao */
+        ret = wait_with_unbloqued_check(hTimer, sNomeThread);
+        if(ret != 0) break; /* Esc pressionado */
 
         alarme.nseq = nseq_alarme++;
         if (nseq_msg > NSEQ_MAX) nseq_alarme = 0;
@@ -337,12 +357,14 @@ DWORD WINAPI Thread_CLP_Monitoracao()
         }
         printf("ALARME %s, %s\n", exemplo_cod.id, exemplo_cod.descricao);
 
-        Sleep(1000 + (rand() % 4000));
-
+        /* Dispara timer de disparo único após tempo aleatório */
+        PresetTimerMonit.QuadPart = -(INTERVAL_MONIT_TIMER * MS_PARA_10NS);
+        ret = SetWaitableTimer(hTimerMonit, &PresetTimerMonit, 0, NULL, NULL, FALSE);
+        CheckForError(ret);
     }
 
-    CloseHandle(hBloq[0]);
-    CloseHandle(hBloq[1]);
+    CloseHandle(hEsc);
+    CloseHandle(hSwitch);
     printf("Thread Monitoracao foi finalizada\n");
     return (0);
 }
