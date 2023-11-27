@@ -1,5 +1,4 @@
-﻿
-#include <conio.h>
+﻿#include <conio.h>
 #include <process.h>  // _beginthreadex() e _endthreadex()
 #include <stdio.h>
 #include <stdlib.h>
@@ -7,6 +6,16 @@
 #include <time.h>
 #include <windows.h>
 
+#include <iostream>
+#include <iomanip>
+#include <ctime>
+#include <atlstr.h> 
+#include <sstream>  
+#include <cstring>
+#include <format>
+#include <ostream>
+
+using namespace std;
 #include "CheckForError.h";
 
 #define N_CLP_MENSAGENS 2
@@ -17,7 +26,6 @@
 #define NSEQ_MAX 99999
 
 #define DIAG_FALHA 55
-
 #define MSG_TAM_TOT 40
 #define MSG_NSEQ_TAM 5
 #define MSG_ID_TAM 1
@@ -37,11 +45,11 @@
 
 /* --------------------- Struct para mensagem de dados ----------------------------- */
 typedef struct {
-    int nseq;               // N�mero sequencial da mensagem
-    int id;                 // Identifica��o do CLP
-    int diag;               // Diagn�stico dos cart�es do CLP
-    float pressao_interna;  // Press�o interna na panela de gusa
-    float pressao_injecao;  // Press�o de inje��o do nitrog�nio
+    int nseq;               // N mero sequencial da mensagem
+    int id;                 // Identifica  o do CLP
+    int diag;               // Diagn stico dos cart es do CLP
+    float pressao_interna;  // Press o interna na panela de gusa
+    float pressao_injecao;  // Press o de inje  o do nitrog nio
     float temp;             // Temperatura na panela
     SYSTEMTIME timestamp;   // Horas da mensagem
 } mensagem_t;
@@ -49,10 +57,12 @@ typedef struct {
 int nseq_msg = 0;
 int bloqueio = 0;
 HANDLE hMutex_nseq_msg;
+LPSTR tempo;
+
 
 typedef struct {
-    int nseq;                   // N�mero sequencial da mensagem
-    char id[ALARME_ID_TAM+1];   // Identifica��o do CLP
+    int nseq;                   // N mero sequencial da mensagem
+    char id[ALARME_ID_TAM + 1];   // Identifica  o do CLP
     SYSTEMTIME timestamp;       // Horas da mensagem
 } alarme_t;
 
@@ -60,8 +70,15 @@ int nseq_alarme = 0;
 
 typedef struct {
     char id[ALARME_ID_TAM + 1];
-    char descricao[50];
+    char descricao[100];
 } alarme_code_t;
+
+typedef struct {
+    int nseq;                   // N mero sequencial da mensagem
+    char id[ALARME_ID_TAM + 1];   // Identifica  o do CLP
+    char tempo[ALARME_TIMESTAMP_TAM+50];
+}alarme_envio;
+
 
 alarme_code_t lista_alarmes[N_ALARMES] = {
     {"A2", "Esteira Parou"},
@@ -69,19 +86,35 @@ alarme_code_t lista_alarmes[N_ALARMES] = {
     {"Q2", "Baixa pressao de injecao do nitrogenio"},
     {"C4", "Concentracao baixa de carbono no sistema"},
     {"C6", "Concentracao baixa de silicio no sistema"},
-
 };
-
 /* ----------------------- Estrutura Lista Circular de Mensagens -------------------------------------- */
 
-typedef struct {char msg[MSG_TAM_TOT+1];} msg_na_fila_t;
+typedef struct { char msg[MSG_TAM_TOT + 1]; } msg_na_fila_t;
 
-msg_na_fila_t fila_msg[MSG_LIMITE];  // Lista Circular
-int pos_livre=0; int pos_ocupada=0;	// Contadores para lista circular
+
+msg_na_fila_t fila_msg[MSG_LIMITE]; // Lista circular 1
+int pos_livre = 0; int pos_ocupada = 0;	// Contadores para lista circular
 HANDLE hMutexFilaMsg;
 HANDLE hSemConsumirMsg;
 HANDLE hSemProduzirMsg;
 int total_mensagem = 0;
+
+/* ------------------------ Declarações para Maislot --------------------------*/
+HANDLE hMutex_MS;
+
+
+/* ------------------------------------- Estrutura Timers -------------------------------------- */
+#define MS_PARA_10NS 10000
+#define STARTUP_TIME_TIMERS 2000 //ms
+
+#define INTERVAL_CLPS_TIMERS 500 // ms
+
+#define INTERVAL_MONIT_TIMER_MIN 1000 // ms
+#define INTERVAL_MONIT_TIMER_MAX 5000 // ms
+#define INTERVAL_MONIT_TIMER (INTERVAL_MONIT_TIMER_MIN + (rand() % INTERVAL_MONIT_TIMER_MAX))
+
+HANDLE hTimerCLP[N_CLP_MENSAGENS];
+HANDLE hTimerMonit;
 
 /* ------------------------------------ Estrutura para os eventos -------------------------------------- */
 
@@ -91,6 +124,8 @@ enum {
     INDEX_CLP_MONITORACAO,
     INDEX_RETIRADA
 };
+HANDLE msg_diag55;
+HANDLE hMsg;
 
 /* --------------------------------------- Definicoes de casting ----------------------------------------- */
 
@@ -104,13 +139,18 @@ DWORD WINAPI Thread_Retirada_Mensagens();
 
 int encode_msg(mensagem_t* dados, char* msg);
 int encode_alarme(alarme_t* dados, char* alarme);
-DWORD wait_with_unbloqued_check(HANDLE * hEvents, char * threadName);
+int decode_msg(char* msg, mensagem_t* dados, alarme_envio* mensagem);
+int decode_alarme(char* msg, alarme_t* dados, alarme_envio* mensagem);
+DWORD wait_with_unbloqued_check(HANDLE* hEvents, char* threadName);
 
 /* --------------------------------------- Funcao Main ----------------------------------------- */
 
 int main() {
     DWORD Retorno;
     DWORD ThreadID;
+    LARGE_INTEGER PresetTimerCLP, PresetTimerMonit;
+    BOOL bRet;
+
 
     hMutex_nseq_msg = CreateMutex(NULL, FALSE, "MUTEX_NSEQ_MSG");
     CheckForError(hMutex_nseq_msg);
@@ -124,35 +164,66 @@ int main() {
     hSemProduzirMsg = CreateSemaphore(NULL, MSG_LIMITE, MSG_LIMITE, "SEM_PRODUZIR");
     CheckForError(hSemProduzirMsg);
 
+    hMsg = CreateEvent(NULL, TRUE, FALSE, "msg");
+    CheckForError(hMsg);
 
+    hMutex_MS = CreateMutex(NULL, FALSE, "MUTEX_MS");
+    CheckForError(hMutex_MS);
+
+    /* Criação dos CLPs de leitura */
+    char sNomeTimer[15];
     for (int i = 0; i < N_CLP_MENSAGENS; i++) {
+
+        /* Cria timer com reset autom tico */
+        snprintf(sNomeTimer, 15, "TimerCLP%d", i + 1);
+        hTimerCLP[i] = CreateWaitableTimer(NULL, FALSE, sNomeTimer);
+        CheckForError(hTimerCLP[i]);
+
+        /* Cria Thread */
         ThreadsCLP[i] = (HANDLE)_beginthreadex(NULL, 0, (CAST_FUNCTION)Thread_CLP_Mensagens, (LPVOID)(INT_PTR)i, 0, (CAST_LPDWORD)&ThreadID);
         if (ThreadsCLP[i] != (HANDLE)-1L) {
-            printf("Thread Criada %d com sucesso, ID = %0x\n", i, ThreadID);
-        } else {
-            printf("Erro na criacao da thread Cliente! N = %d Codigo = %d\n", i, errno);
+            printf("Thread CLP%d Criada com sucesso, ID = %0x\n", i + 1, ThreadID);
+        }
+        else {
+            printf("Erro na criacao da thread CLP%d Codigo = %d\n", i + 1, errno);
             exit(0);
         }
+
+        /* Dispara timer periodico após tempo de startup */
+        PresetTimerCLP.QuadPart = -(STARTUP_TIME_TIMERS * MS_PARA_10NS);
+        bRet = SetWaitableTimer(hTimerCLP[i], &PresetTimerCLP, INTERVAL_CLPS_TIMERS, NULL, NULL, FALSE);
+        CheckForError(bRet);
     }
 
+    /* Criacao do CLP de monitoracao */
+    hTimerMonit = CreateWaitableTimer(NULL, FALSE, "TimerMonitoracao");
+    CheckForError(hTimerMonit);
     ThreadsCLP[INDEX_CLP_MONITORACAO] = (HANDLE)_beginthreadex(NULL, 0, (CAST_FUNCTION)Thread_CLP_Monitoracao, NULL, 0, (CAST_LPDWORD)&ThreadID);
     if (ThreadsCLP[INDEX_CLP_MONITORACAO] != (HANDLE)-1L) {
         printf("Thread Monitoracao Criada com sucesso, ID = %0x\n", ThreadID);
-    } else {
-        printf("Erro na criacao da thread Monitoracao! Codigo = %d\n", errno);
+    }
+    else {
+        printf("Erro na criacao da ThreadMonitoracao! Codigo = %d\n", errno);
         exit(0);
     }
+    /* Dispara timer de disparo único após tempo de startup */
+    PresetTimerMonit.QuadPart = -(STARTUP_TIME_TIMERS * MS_PARA_10NS);
+    bRet = SetWaitableTimer(hTimerMonit, &PresetTimerMonit, 0, NULL, NULL, FALSE);
+    CheckForError(bRet);
 
+    /* Criacao da thread retirada de mensagens */
     ThreadsCLP[INDEX_RETIRADA] = (HANDLE)_beginthreadex(NULL, 0, (CAST_FUNCTION)Thread_Retirada_Mensagens, NULL, 0, (CAST_LPDWORD)&ThreadID);
     if (ThreadsCLP[INDEX_RETIRADA] != (HANDLE)-1L) {
         printf("Thread Retirada Criada com sucesso, ID = %0x\n", ThreadID);
-    } else {
+    }
+    else {
         printf("Erro na criacao da thread Retirada! Codigo = %d\n", errno);
         exit(0);
     }
 
-    Retorno = WaitForMultipleObjects(INDEX_RETIRADA + 1, ThreadsCLP, TRUE, INFINITE);  // Fun��o de espera do fechamento das threads
-    if (Retorno != WAIT_OBJECT_0)                                                      
+    /* Espera do fechamento das threads */
+    Retorno = WaitForMultipleObjects(INDEX_RETIRADA + 1, ThreadsCLP, TRUE, INFINITE);
+    if (Retorno != WAIT_OBJECT_0)
     {
         CheckForError(Retorno);
     }
@@ -160,11 +231,17 @@ int main() {
     for (int i = 0; i < INDEX_RETIRADA + 1; i++) {
         CloseHandle(ThreadsCLP[i]);
     }
+    for (int i = 0; i < N_CLP_MENSAGENS; i++) {
+        CloseHandle(hTimerCLP[i]);
+    }
+    CloseHandle(hTimerMonit);
 
     CloseHandle(hMutex_nseq_msg);
     CloseHandle(hMutexFilaMsg);
     CloseHandle(hSemConsumirMsg);
     CloseHandle(hSemProduzirMsg);
+    CloseHandle(hMutex_MS);
+    CloseHandle(hMsg);
 
     printf("Finalizando Processos CLPs\n");
 }
@@ -172,16 +249,17 @@ int main() {
 /* --------------------------------------- Threads ----------------------------------------- */
 
 DWORD WINAPI Thread_CLP_Mensagens(int index) {
-    srand(GetCurrentThreadId());
     DWORD ret;
     mensagem_t msg;
     char msg_str[MSG_TAM_TOT + MSG_TAM_TOT];
+
     HANDLE hEsc, hSwitch;
+    HANDLE hTimer[3];
     HANDLE hNSeq[3];
     HANDLE hFila[3];
     HANDLE hProduzir[3];
-    int evento_atual = -1;
-    
+    HANDLE msg_diag55;
+
     char sNomeThread[9];
     snprintf(sNomeThread, 9, "Leitura%d", index + 1);
 
@@ -193,6 +271,10 @@ DWORD WINAPI Thread_CLP_Mensagens(int index) {
     if (hSwitch == NULL) {
         printf("ERROR : %d", GetLastError());
     }
+
+    hTimer[0] = hEsc;
+    hTimer[1] = hSwitch;
+    hTimer[2] = hTimerCLP[index];
 
     hNSeq[0] = hEsc;
     hNSeq[1] = hSwitch;
@@ -206,20 +288,24 @@ DWORD WINAPI Thread_CLP_Mensagens(int index) {
     hProduzir[1] = hSwitch;
     hProduzir[2] = hSemProduzirMsg;
 
-    while(1) {
+    while (1) {
+        /* Aguarda Temporizacao */
+        ret = wait_with_unbloqued_check(hTimer, sNomeThread);
+        if (ret != 0) break; /* Esc pressionado */
+
         /* Verificar se há espaço disponivel na fila */
         ret = wait_with_unbloqued_check(hFila, sNomeThread); /* Aguarda estar desbloqueado e ter o mutex da fila */
-        if(ret != 0) break; /* Esc pressionado */
-        if (total_mensagem == MSG_LIMITE){
+        if (ret != 0) break; /* Esc pressionado */
+        if (total_mensagem == MSG_LIMITE) {
             printf("Fila cheia\n");
         }
         ReleaseMutex(hMutexFilaMsg);
         ret = wait_with_unbloqued_check(hProduzir, sNomeThread); /* Aguarda estar desbloqueado e semáforo de producao */
-        if(ret != 0) break; /* Esc pressionado */
+        if (ret != 0) break; /* Esc pressionado */
 
         /* Produzir dados da mensagem */
         ret = wait_with_unbloqued_check(hNSeq, sNomeThread); /* Aguarda estar desbloqueado e ter o mutex do nSeq */
-        if(ret != 0) break; /* Esc pressionado */
+        if (ret != 0) break; /* Esc pressionado */
 
         msg.nseq = nseq_msg++;
         if (nseq_msg > NSEQ_MAX) nseq_msg = 0;
@@ -234,60 +320,82 @@ DWORD WINAPI Thread_CLP_Mensagens(int index) {
 
         /* Transformar dados em string separada por ; */
         encode_msg(&msg, msg_str);
-        printf("Mensagem Gerada: %s\n", msg_str);
+        //printf("Mensagem Gerada: %s\n", msg_str);
 
         /* Inserir na Fila de Mensagens e notificar mensagem a ser consumida */
         ret = wait_with_unbloqued_check(hFila, sNomeThread); /* Aguarda estar desbloqueado e ter o mutex da fila */
-        if(ret != 0) break; /* Esc pressionado */
+        if (ret != 0) break; /* Esc pressionado */
         total_mensagem++;
         memcpy(&fila_msg[pos_livre].msg, msg_str, MSG_TAM_TOT);
         pos_livre = (pos_livre + 1) % MSG_LIMITE;
         ReleaseMutex(hMutexFilaMsg);
         ReleaseSemaphore(hSemConsumirMsg, 1, NULL);
-
-        /* Dormir por 1 a 5 segundos (aleatorio) */
-        Sleep(1000 + (rand() % 4000));
-
     }
 
     CloseHandle(hEsc);
     CloseHandle(hSwitch);
 
+
+
     printf("Thread Leitura%d foi finalizada\n", index + 1);
     return (0);
 }
 
-DWORD WINAPI Thread_CLP_Monitoracao() 
+DWORD WINAPI Thread_CLP_Monitoracao()
 {
     srand(GetCurrentThreadId());
+    HANDLE hMS;
     DWORD ret;
-    int evento_atual = -1;
+    DWORD bytes = 0;
+    HANDLE hEsc, hSwitch;
+    HANDLE hTimer[3];
+    char alarme_str[ALARME_TAM_TOT + ALARME_TAM_TOT];
+    char sNomeThread[] = "Thread de Monitoracao";
     alarme_t alarme;
-    char alarme_str[ALARME_TAM_TOT+ALARME_TAM_TOT];
-    
-    HANDLE hBloq[2];
-    hBloq[0] = OpenEvent(EVENT_ALL_ACCESS, FALSE, "Esc");
-    if (hBloq[0] == NULL) 
+    LARGE_INTEGER PresetTimerMonit;
+    BOOL ms_envio;
+    HANDLE msg_alarme;
+    alarme_t exemplo_data;/* RETIRAR DEPOIS */
+    alarme_envio mensagem_alarme;
+
+    hEsc = OpenEvent(EVENT_ALL_ACCESS, FALSE, "Esc");
+    if (hEsc == NULL)
     {
         printf("ERROR : %d", GetLastError());
     }
-    hBloq[1] = OpenEvent(EVENT_ALL_ACCESS, FALSE, "Monitoracao");
-    if (hBloq[1] == NULL) {
+    hSwitch = OpenEvent(EVENT_ALL_ACCESS, FALSE, "Monitoracao");
+    if (hSwitch == NULL) {
         printf("ERROR : %d", GetLastError());
     }
+    msg_alarme = CreateEvent(NULL, FALSE, FALSE, "msg_alarme");
+    CheckForError(msg_alarme);
 
-    while(1) {
 
-        ret = WaitForMultipleObjects(2, hBloq, FALSE, 0);
-		if (ret == WAIT_OBJECT_0) break;
-		if(ret == WAIT_OBJECT_0 + 1){
-			printf("Thread de monitoração Bloqueada\n");
-			ret = WaitForMultipleObjects(2, hBloq, FALSE, INFINITE);
-			if (ret == WAIT_OBJECT_0){
-				break;
-			}
-			printf("Thread de monitoração Desbloqueada\n");
-		}
+    WaitForSingleObject(hMsg, INFINITE);
+
+    hMS = CreateFile(
+        "\\\\.\\mailslot\\ms_alarmes",
+        GENERIC_WRITE,
+        FILE_SHARE_READ,
+        NULL,
+        OPEN_EXISTING,
+        FILE_ATTRIBUTE_NORMAL,
+        NULL);
+    if (hMS == INVALID_HANDLE_VALUE)
+    {
+        printf("CreateFIle falhou : %d\n", GetLastError());
+    }
+    hTimer[0] = hEsc;
+    hTimer[1] = hSwitch;
+    hTimer[2] = hTimerMonit;
+
+
+
+    while (1) {
+
+        /* Aguarda Temporizacao */
+        ret = wait_with_unbloqued_check(hTimer, sNomeThread);
+        if (ret != 0) break; /* Esc pressionado */
 
         alarme.nseq = nseq_alarme++;
         if (nseq_msg > NSEQ_MAX) nseq_alarme = 0;
@@ -298,24 +406,50 @@ DWORD WINAPI Thread_CLP_Monitoracao()
         encode_alarme(&alarme, alarme_str);
         printf("Alarme Gerado: %s\n", alarme_str);
 
-        Sleep(1000 + (rand() % 4000));
+        /* Exemplo decode RETIRAR DEPOIS*/
+        decode_alarme(alarme_str, &exemplo_data, &mensagem_alarme);
+        WaitForSingleObject(hMutex_MS, INFINITE);
 
+        if (SetEvent(msg_alarme) == 0)
+        {
+            printf("%d\n", GetLastError());
+        }
+        printf("%s\n", mensagem_alarme.tempo);
+        ms_envio = WriteFile(hMS, &mensagem_alarme, sizeof(alarme_envio), &bytes, NULL);
+        if (ms_envio == 0)
+        {
+            printf("Escrita falhou: %d\n", GetLastError());
+        }
+        ReleaseMutex(hMutex_MS);
+
+        /* Dispara timer de disparo único após tempo aleatório */
+        PresetTimerMonit.QuadPart = -(INTERVAL_MONIT_TIMER * MS_PARA_10NS);
+        ret = SetWaitableTimer(hTimerMonit, &PresetTimerMonit, 0, NULL, NULL, FALSE);
+        CheckForError(ret);
     }
 
-    CloseHandle(hBloq[0]);
-    CloseHandle(hBloq[1]);
-    printf("Thread Monitoracao foi finalizada\n");
+    CloseHandle(hEsc);
+    CloseHandle(hSwitch);
+    CloseHandle(hMS);
+    CloseHandle(msg_alarme);
+    printf("Thread Monitoracao de alarmes foi finalizada\n");
     return (0);
 }
 
 DWORD WINAPI Thread_Retirada_Mensagens() {
     DWORD ret;
+    DWORD bytes;
     HANDLE hEsc, hSwitchRetirada;
     HANDLE hFila[3];
     HANDLE hConsumir[3];
+    HANDLE hMS;
+    HANDLE msg_diag55;
     msg_na_fila_t msg;
+    mensagem_t msg_data;
     int evento_atual = -1;
-    char sNomeThread[] = "RetiradaMensagens";
+    char sNomeThread[] = "Thread de Retirada de Mensagens";
+    BOOL ms_envio;
+    alarme_envio mensagem;
 
     hEsc = OpenEvent(EVENT_ALL_ACCESS, FALSE, "Esc");
     if (hEsc == NULL) {
@@ -325,6 +459,8 @@ DWORD WINAPI Thread_Retirada_Mensagens() {
     if (hSwitchRetirada == NULL) {
         printf("ERROR : %d", GetLastError());
     }
+    msg_diag55 = CreateEvent(NULL, FALSE, FALSE, "msg_diag55");
+
 
     hFila[0] = hEsc;
     hFila[1] = hSwitchRetirada;
@@ -335,21 +471,61 @@ DWORD WINAPI Thread_Retirada_Mensagens() {
     hConsumir[2] = hSemConsumirMsg;
 
 
-    while(1) {
+
+    WaitForSingleObject(hMsg, INFINITE);
+
+    hMS = CreateFile(
+        "\\\\.\\mailslot\\ms_alarmes",
+        GENERIC_WRITE,
+        FILE_SHARE_READ,
+        NULL,
+        OPEN_EXISTING,
+        FILE_ATTRIBUTE_NORMAL,
+        NULL);
+    if (hMS == INVALID_HANDLE_VALUE)
+    {
+        printf("CreateFIle falhou : %d\n", GetLastError());
+    }
+
+
+
+    while (1) 
+    {
         /* Aguarda haver mensagem a ser consumida */
         ret = wait_with_unbloqued_check(hConsumir, sNomeThread); /* Aguarda estar desbloqueado e semáforo de consumo */
-        if(ret != 0) break; /* Esc pressionado */
-    
+        if (ret != 0) break; /* Esc pressionado */
+
         ret = wait_with_unbloqued_check(hFila, sNomeThread); /* Aguarda estar desbloqueado e semáforo de consumo */
-        if(ret != 0) break; /* Esc pressionado */
+        if (ret != 0) break; /* Esc pressionado */
         memcpy(&msg.msg, &fila_msg[pos_ocupada].msg, MSG_TAM_TOT);
         pos_ocupada = (pos_ocupada + 1) % MSG_LIMITE;
         total_mensagem--;
         ReleaseMutex(hMutexFilaMsg);
 
-        /* Trata mensagem */
-        msg.msg[MSG_TAM_TOT] = '\0';
-        printf("Mensagem Retirada: %s\n", msg.msg);
+        decode_msg(msg.msg, &msg_data, &mensagem);
+        printf("Mensagem Retirada: %d %d %d %f %f %f %d %d %d\n",
+            msg_data.nseq,
+            msg_data.id,
+            msg_data.diag,
+            msg_data.pressao_interna,
+            msg_data.pressao_injecao,
+            msg_data.temp,
+            msg_data.timestamp.wHour,
+            msg_data.timestamp.wMinute,
+            msg_data.timestamp.wSecond
+        );
+        if (msg_data.diag == 55)
+        {
+            WaitForSingleObject(hMutex_MS, INFINITE);
+            ms_envio = WriteFile(hMS, &mensagem, sizeof(alarme_envio), &bytes, NULL);
+            if (!ms_envio)
+            {
+                printf("Erro no envio do diag : %d", GetLastError());
+            }
+            SetEvent(msg_diag55);
+            ReleaseMutex(hMutex_MS);
+
+        }
 
         /* Libera producao */
         ReleaseSemaphore(hSemProduzirMsg, 1, NULL);
@@ -357,6 +533,10 @@ DWORD WINAPI Thread_Retirada_Mensagens() {
 
     CloseHandle(hEsc);
     CloseHandle(hSwitchRetirada);
+    CloseHandle(hMS);
+    CloseHandle(hFila);
+    CloseHandle(hConsumir);
+    CloseHandle(msg_diag55);
     printf("Thread Retirada foi finalizada\n");
     return (0);
 }
@@ -419,10 +599,11 @@ int encode_msg(mensagem_t* dados, char* msg) {
     return 1;
 }
 
-int encode_alarme(alarme_t* dados, char* alarme){
+int encode_alarme(alarme_t* dados, char* alarme) {
     char string_formato[20], string_dado[20];
     int pos_atual = 0;
-
+ 
+    
     snprintf(string_formato, 20, "%%0%dd", ALARME_NSEQ_TAM);
     snprintf(string_dado, 20, string_formato, dados->nseq);
     strncpy_s(&alarme[pos_atual], ALARME_TAM_TOT + 1, string_dado, ALARME_NSEQ_TAM);
@@ -434,41 +615,132 @@ int encode_alarme(alarme_t* dados, char* alarme){
     pos_atual += ALARME_ID_TAM;
     strncpy_s(&alarme[pos_atual], ALARME_TAM_TOT + 1, DELIMITADOR_CAMPO, 1);
     pos_atual++;
-
+    
     snprintf(string_formato, 20, "%%02d:%%02d:%%02d");
     snprintf(string_dado, 20, string_formato, dados->timestamp.wHour, dados->timestamp.wMinute, dados->timestamp.wSecond);
     strncpy_s(&alarme[pos_atual], ALARME_TAM_TOT + 1, string_dado, ALARME_TIMESTAMP_TAM);
-    pos_atual += ALARME_TIMESTAMP_TAM;
-
-    alarme[pos_atual] = '\0';
-
+    
     return 1;
 }
 
-DWORD wait_with_unbloqued_check(HANDLE * hEvents, char * threadName){
+int decode_msg(char* msg, mensagem_t* dados, alarme_envio* mensagem) {
+    char string_dado[20];
+    int pos_atual = 0;
+
+    strncpy_s(string_dado, 20, &msg[pos_atual], MSG_NSEQ_TAM);
+    string_dado[MSG_NSEQ_TAM] = '\0';
+    dados->nseq = atoi(string_dado);
+    pos_atual += MSG_NSEQ_TAM + 1;
+    mensagem->nseq = dados->nseq;
+
+    strncpy_s(string_dado, 20, &msg[pos_atual], MSG_ID_TAM);
+    string_dado[MSG_ID_TAM] = '\0';
+    dados->id = atoi(string_dado);
+    strncpy_s(mensagem->id, 3, string_dado, MSG_ID_TAM);
+;   pos_atual += MSG_ID_TAM + 1;
+   
+
+    strncpy_s(string_dado, 20, &msg[pos_atual], MSG_DIAG_TAM);
+    string_dado[MSG_DIAG_TAM] = '\0';
+    dados->diag = atoi(string_dado);
+    pos_atual += MSG_DIAG_TAM + 1;
+
+    strncpy_s(string_dado, 20, &msg[pos_atual], MSG_PRES_INTERNA_TAM);
+    string_dado[MSG_PRES_INTERNA_TAM] = '\0';
+    dados->pressao_interna = atof(string_dado);
+    pos_atual += MSG_PRES_INTERNA_TAM + 1;
+
+    strncpy_s(string_dado, 20, &msg[pos_atual], MSG_PRES_INJECAO_TAM);
+    string_dado[MSG_PRES_INJECAO_TAM] = '\0';
+    dados->pressao_injecao = atof(string_dado);
+    pos_atual += MSG_PRES_INJECAO_TAM + 1;
+
+    strncpy_s(string_dado, 20, &msg[pos_atual], MSG_TEMP_TAM);
+    string_dado[MSG_TEMP_TAM] = '\0';
+    dados->temp = atof(string_dado);
+    pos_atual += MSG_TEMP_TAM + 1;
+
+    strncpy_s(string_dado, 20, &msg[pos_atual], 2);
+    string_dado[MSG_TEMP_TAM] = '\0';
+    dados->timestamp.wHour = atoi(string_dado);
+    pos_atual += 3;
+
+    strncpy_s(string_dado, 20, &msg[pos_atual], 2);
+    string_dado[MSG_TEMP_TAM] = '\0';
+    dados->timestamp.wMinute = atoi(string_dado);
+    pos_atual += 3;
+
+    strncpy_s(string_dado, 20, &msg[pos_atual], 2);
+    string_dado[MSG_TEMP_TAM] = '\0';
+    dados->timestamp.wSecond = atoi(string_dado);
+    pos_atual += 3;
+}
+
+int decode_alarme(char* msg, alarme_t* dados, alarme_envio* mensagem) {
+    char string_dado[20];
+    int pos_atual = 0;
+    string str;
+    
+   
+
+    strncpy_s(string_dado, 20, &msg[pos_atual], ALARME_NSEQ_TAM);
+    string_dado[ALARME_NSEQ_TAM] = '\0';
+    dados->nseq = atoi(string_dado);
+    pos_atual += ALARME_NSEQ_TAM + 1;
+    mensagem->nseq = dados->nseq;
+
+    strncpy_s(string_dado, 20, &msg[pos_atual], ALARME_ID_TAM);
+    string_dado[ALARME_ID_TAM] = '\0';
+    strncpy_s(dados->id, ALARME_ID_TAM + 1, &msg[pos_atual], ALARME_ID_TAM);
+    dados->id[ALARME_ID_TAM] = '\0';
+    pos_atual += ALARME_ID_TAM + 1;
+    strncpy_s(mensagem->id, ALARME_ID_TAM + 1, dados->id, ALARME_ID_TAM);
+
+    strncpy_s(string_dado, 20, &msg[pos_atual], 2);
+    string_dado[MSG_TEMP_TAM] = '\0';
+    dados->timestamp.wHour = atoi(string_dado);
+    pos_atual += 3;
+    strncpy_s(&mensagem->tempo[0], ALARME_TIMESTAMP_TAM+1, string_dado, 2);
+    mensagem->tempo[2] = ':';
+    
+    strncpy_s(string_dado, 20, &msg[pos_atual], 2);
+    string_dado[MSG_TEMP_TAM] = '\0';
+    dados->timestamp.wMinute = atoi(string_dado);
+    strncpy_s(&mensagem->tempo[3], ALARME_TIMESTAMP_TAM+1, string_dado, 2);
+    pos_atual += 3;
+    mensagem->tempo[5] = ':';
+
+    strncpy_s(string_dado, 20, &msg[pos_atual], 2);
+    string_dado[MSG_TEMP_TAM] = '\0';
+    dados->timestamp.wSecond = atoi(string_dado);
+    strncpy_s(&mensagem->tempo[6], ALARME_TIMESTAMP_TAM + 1, string_dado, 2);
+    pos_atual += 3;
+    mensagem->tempo[8] = '\0';
+    
+}
+
+
+DWORD wait_with_unbloqued_check(HANDLE* hEvents, char* threadName) {
     DWORD ret = 0;
 
-    do{
+    do {
         ret = WaitForMultipleObjects(3, hEvents, FALSE, INFINITE);
         if (ret == WAIT_OBJECT_0) break; /* Esc pressionado */
-        if(ret == WAIT_OBJECT_0 + 1){ /* Tecla pressionada */
+        if (ret == WAIT_OBJECT_0 + 1) { /* Tecla pressionada */
             printf("Thread %s Bloqueada\n", threadName);
             ret = WaitForMultipleObjects(2, hEvents, FALSE, INFINITE); /* Aguarda pressionar tecla novamente */
-            if (ret == WAIT_OBJECT_0){
+            if (ret == WAIT_OBJECT_0) {
                 break;
             }
             printf("Thread %s Desbloqueada\n", threadName);
         }
     } while (ret != WAIT_OBJECT_0 + 2); /* Volta a aguardar handle quando desbloqueada */
 
-    if(ret == WAIT_OBJECT_0 + 2){
+    if (ret == WAIT_OBJECT_0 + 2) {
         return 0;
     }
     else {
         return 1;
     }
 }
-
-
-
 
