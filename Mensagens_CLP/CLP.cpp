@@ -91,13 +91,18 @@ typedef struct {
     int pos_livre;
     int pos_ocupada;
     int total;
+    char lista[MSG_LIMITE][MSG_TAM_TOT + 1];
+} lista_circular_t;
+
+typedef struct {
     HANDLE hMutex;
     HANDLE hSemConsumir;
     HANDLE hSemProduzir;
-    char fila[MSG_LIMITE][MSG_TAM_TOT + 1];
-} lista_circular_msg_t;
+    lista_circular_t * lc;
+} lista_multithread;
 
-lista_circular_msg_t ListaMsg1;
+lista_circular_t listaCLPs;
+lista_multithread ListaMsg1;
 
 /* ------------------------ Declarações para Maislot --------------------------*/
 HANDLE hMutex_MS;
@@ -167,6 +172,8 @@ int main() {
 
     hMutex_MS = CreateMutex(NULL, FALSE, "MUTEX_MS");
     CheckForError(hMutex_MS);
+
+    ListaMsg1.lc = &listaCLPs;
     
     /* Criação dos CLPs de leitura */
     char sNomeTimer[15];
@@ -293,7 +300,7 @@ DWORD WINAPI Thread_CLP_Mensagens(int index) {
         /* Verificar se há espaço disponivel na fila */
         ret = wait_with_unbloqued_check(hListaMsg, sNomeThread); /* Aguarda estar desbloqueado e ter o mutex da fila */
         if (ret != 0) break; /* Esc pressionado */
-        if (ListaMsg1.total == MSG_LIMITE) {
+        if (ListaMsg1.lc->total == MSG_LIMITE) {
             printf("Fila cheia\n");
         }
         ReleaseMutex(ListaMsg1.hMutex);
@@ -322,9 +329,9 @@ DWORD WINAPI Thread_CLP_Mensagens(int index) {
         /* Inserir na Fila de Mensagens e notificar mensagem a ser consumida */
         ret = wait_with_unbloqued_check(hListaMsg, sNomeThread); /* Aguarda estar desbloqueado e ter o mutex da fila */
         if (ret != 0) break; /* Esc pressionado */
-        ListaMsg1.total++;
-        memcpy(ListaMsg1.fila[ListaMsg1.pos_livre], msg_str, MSG_TAM_TOT);
-        ListaMsg1.pos_livre = (ListaMsg1.pos_livre + 1) % MSG_LIMITE;
+        ListaMsg1.lc->total++;
+        memcpy(ListaMsg1.lc->lista[ListaMsg1.lc->pos_livre], msg_str, MSG_TAM_TOT);
+        ListaMsg1.lc->pos_livre = (ListaMsg1.lc->pos_livre + 1) % MSG_LIMITE;
         ReleaseMutex(ListaMsg1.hMutex);
         ReleaseSemaphore(ListaMsg1.hSemConsumir, 1, NULL);
     }
@@ -492,9 +499,9 @@ DWORD WINAPI Thread_Retirada_Mensagens() {
 
         ret = wait_with_unbloqued_check(hListaMsg, sNomeThread); /* Aguarda estar desbloqueado e semáforo de consumo */
         if (ret != 0) break; /* Esc pressionado */
-        memcpy(sMsg, ListaMsg1.fila[ListaMsg1.pos_ocupada], MSG_TAM_TOT);
-        ListaMsg1.pos_ocupada = (ListaMsg1.pos_ocupada + 1) % MSG_LIMITE;
-        ListaMsg1.total--;
+        memcpy(sMsg, ListaMsg1.lc->lista[ListaMsg1.lc->pos_ocupada], MSG_TAM_TOT);
+        ListaMsg1.lc->pos_ocupada = (ListaMsg1.lc->pos_ocupada + 1) % MSG_LIMITE;
+        ListaMsg1.lc->total--;
         ReleaseMutex(ListaMsg1.hMutex);
 
         decode_msg(sMsg, &msg_data, &mensagem);
