@@ -146,6 +146,7 @@ int encode_alarme(alarme_t* dados, char* alarme);
 int decode_msg(char* msg, mensagem_t* dados, alarme_t* mensagem);
 int decode_alarme(char* msg, alarme_t* dados);
 DWORD wait_with_unbloqued_check(HANDLE* hEvents, char* threadName);
+BOOL abrir_lista2(HANDLE * hSection, lista_multithread * Lista, HANDLE * outMut, HANDLE * outSem);
 
 /* --------------------------------------- Funcao Main ----------------------------------------- */
 
@@ -246,7 +247,7 @@ int main() {
     CloseHandle(hMutex_MS);
     CloseHandle(hMsg);
 
-    printf("Finalizando Processos CLPs\n");
+    printf("Processo CPLs encerrado\n");
 }
 
 /* --------------------------------------- Threads ----------------------------------------- */
@@ -301,7 +302,7 @@ DWORD WINAPI Thread_CLP_Mensagens(int index) {
         ret = wait_with_unbloqued_check(hListaMsg, sNomeThread); /* Aguarda estar desbloqueado e ter o mutex da fila */
         if (ret != 0) break; /* Esc pressionado */
         if (ListaMsg1.lc->total == MSG_LIMITE) {
-            printf("Fila cheia\n");
+            printf("Lista 1 cheia\n");
         }
         ReleaseMutex(ListaMsg1.hMutex);
         ret = wait_with_unbloqued_check(hProduzir, sNomeThread); /* Aguarda estar desbloqueado e semáforo de producao */
@@ -442,10 +443,15 @@ DWORD WINAPI Thread_Retirada_Mensagens() {
     DWORD ret;
     DWORD bytes;
     HANDLE hEsc, hSwitchRetirada;
-    HANDLE hListaMsg[3];
+    HANDLE hListaMsg1[3];
+    HANDLE hListaMsg2[3];
     HANDLE hConsumir[3];
+    HANDLE hProduzir[3];
     HANDLE hMS;
     HANDLE msg_diag55;
+    lista_multithread ListaMsg2;
+    HANDLE hSection;
+    BOOL Lista2Disponivel;
 
     char sMsg[MSG_TAM_TOT + 1];
     mensagem_t msg_data;
@@ -466,13 +472,20 @@ DWORD WINAPI Thread_Retirada_Mensagens() {
     msg_diag55 = CreateSemaphore(NULL,0, 10000, "msg_diag55");
 
 
-    hListaMsg[0] = hEsc;
-    hListaMsg[1] = hSwitchRetirada;
-    hListaMsg[2] = ListaMsg1.hMutex;
+    hListaMsg1[0] = hEsc;
+    hListaMsg1[1] = hSwitchRetirada;
+    hListaMsg1[2] = ListaMsg1.hMutex;
+
 
     hConsumir[0] = hEsc;
     hConsumir[1] = hSwitchRetirada;
     hConsumir[2] = ListaMsg1.hSemConsumir;
+
+    hListaMsg2[0] = hEsc;
+    hListaMsg2[1] = hSwitchRetirada;
+
+    hProduzir[0] = hEsc;
+    hProduzir[1] = hSwitchRetirada;
 
     WaitForSingleObject(hMsg, INFINITE);
 
@@ -486,24 +499,47 @@ DWORD WINAPI Thread_Retirada_Mensagens() {
         NULL);
     if (hMS == INVALID_HANDLE_VALUE)
     {
-        printf("CreateFIle falhou : %d\n", GetLastError());
+        printf("CreateFile falhou : %d\n", GetLastError());
     }
 
+    Lista2Disponivel = abrir_lista2(&hSection, &ListaMsg2, &hListaMsg2[2], &hProduzir[2]);
 
+    printf("Thread Retirada Inicializada\n");
 
     while (1) 
     {
+        /* Caso lista 2 estiver indisponível, tenta abri-la */
+        if(Lista2Disponivel == FALSE){
+            Lista2Disponivel = abrir_lista2(&hSection, &ListaMsg2, &hListaMsg2[2], &hProduzir[2]);
+        }
+
+        /* Se lista 2 disponivel, Verifica se há espaço  */
+        if(Lista2Disponivel == TRUE){
+            ret = wait_with_unbloqued_check(hListaMsg2, sNomeThread); /* Aguarda estar desbloqueado e com Mutex da lista2 */
+            if (ret != 0) break; /* Esc pressionado */
+            if(ListaMsg2.lc->total == MSG_LIMITE){
+                printf("Lista 2 cheia\n");
+            }
+            ReleaseMutex(ListaMsg2.hMutex);
+            ret = wait_with_unbloqued_check(hProduzir, sNomeThread); /* Aguarda estar desbloqueado e semáforo de producao */
+            if (ret != 0) break; /* Esc pressionado */
+        }
+
         /* Aguarda haver mensagem a ser consumida */
         ret = wait_with_unbloqued_check(hConsumir, sNomeThread); /* Aguarda estar desbloqueado e semáforo de consumo */
         if (ret != 0) break; /* Esc pressionado */
 
-        ret = wait_with_unbloqued_check(hListaMsg, sNomeThread); /* Aguarda estar desbloqueado e semáforo de consumo */
+        ret = wait_with_unbloqued_check(hListaMsg1, sNomeThread); /* Aguarda estar desbloqueado e semáforo de consumo */
         if (ret != 0) break; /* Esc pressionado */
         memcpy(sMsg, ListaMsg1.lc->lista[ListaMsg1.lc->pos_ocupada], MSG_TAM_TOT);
         ListaMsg1.lc->pos_ocupada = (ListaMsg1.lc->pos_ocupada + 1) % MSG_LIMITE;
         ListaMsg1.lc->total--;
         ReleaseMutex(ListaMsg1.hMutex);
 
+        /* Libera producao */
+        ReleaseSemaphore(ListaMsg1.hSemProduzir, 1, NULL);
+
+        /* Trata mensagem */
         decode_msg(sMsg, &msg_data, &mensagem);
         printf("Mensagem Retirada: %d %d %d %f %f %f %d %d %d\n",
             msg_data.nseq,
@@ -531,16 +567,33 @@ DWORD WINAPI Thread_Retirada_Mensagens() {
             ReleaseMutex(hMutex_MS);
 
         }
+        else{
+            /* Se lista 2 disponivel, deposita mensagem  */
+            if(Lista2Disponivel == TRUE){
+                wait_with_unbloqued_check(hListaMsg2, sNomeThread); /* Aguarda estar desbloqueado e com Mutex da lista2 */
+                if (ret != 0) break; /* Esc pressionado */
+                memcpy(ListaMsg2.lc->lista[ListaMsg2.lc->pos_livre], sMsg, MSG_TAM_TOT);
+                ListaMsg2.lc->pos_livre = (ListaMsg2.lc->pos_livre + 1) % MSG_LIMITE;
+                ListaMsg2.lc->total++;
+                ReleaseMutex(ListaMsg2.hMutex);
+                ReleaseSemaphore(ListaMsg2.hSemConsumir, 1, NULL);
+            }
+        }
 
-        /* Libera producao */
-        ReleaseSemaphore(ListaMsg1.hSemProduzir, 1, NULL);
+        
     }
 
+    // Elimina mapeamento
+    if(Lista2Disponivel == TRUE){
+        CloseHandle(ListaMsg2.hMutex);
+        CloseHandle(ListaMsg2.hSemConsumir);
+        CloseHandle(ListaMsg2.hSemProduzir);
+        ret=UnmapViewOfFile(ListaMsg2.lc);
+        CheckForError(ret);
+    }
     CloseHandle(hEsc);
     CloseHandle(hSwitchRetirada);
     CloseHandle(hMS);
-    CloseHandle(hListaMsg);
-    CloseHandle(hConsumir);
     CloseHandle(msg_diag55);
     printf("Thread Retirada foi finalizada\n");
     return (0);
@@ -746,5 +799,38 @@ DWORD wait_with_unbloqued_check(HANDLE* hEvents, char* threadName) {
     else {
         return 1;
     }
+}
+
+BOOL abrir_lista2(HANDLE * hSection, lista_multithread * Lista, HANDLE * outMut, HANDLE * outSem){
+    BOOL ret = FALSE;
+    *hSection = OpenFileMapping(FILE_MAP_ALL_ACCESS, FALSE, "LISTA_CIRCULAR_2");
+    if(*hSection != NULL){
+        Lista->lc = (lista_circular_t *) MapViewOfFile(*hSection, FILE_MAP_ALL_ACCESS, 0, 0, sizeof(lista_circular_t));
+        Lista->hMutex = OpenMutex(MUTEX_ALL_ACCESS, TRUE, "MUTEX_FILA2");
+        CheckForError(Lista->hMutex);
+        Lista->hSemConsumir = OpenSemaphore(SEMAPHORE_MODIFY_STATE | SYNCHRONIZE, TRUE, "SEM_CONSUMIR_FILA2");
+        CheckForError(Lista->hSemConsumir);
+        Lista->hSemProduzir = OpenSemaphore(SEMAPHORE_MODIFY_STATE | SYNCHRONIZE, TRUE, "SEM_PRODUZIR_FILA2");
+        CheckForError(Lista->hSemProduzir);
+        *outMut = Lista->hMutex;
+        *outSem = Lista->hSemProduzir;
+
+        ret = (
+            (*hSection != NULL) &&
+            (Lista->lc != NULL) &&
+            (Lista->hMutex != NULL) &&
+            (Lista->hSemConsumir != NULL) &&
+            (Lista->hSemProduzir != NULL)
+        );
+    }
+
+    if(!ret){
+        printf("Não foi possível abrir Lista 2 %d\n", (int) GetLastError());
+    }
+    else {
+        printf("Lista 2 aberta com sucesso!\n");
+    }
+
+    return ret;
 }
 

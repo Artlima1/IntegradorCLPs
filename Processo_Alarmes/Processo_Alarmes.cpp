@@ -196,7 +196,7 @@ int main()
 	CloseHandle(semaforo_diag55);
 
 
-	printf("Processo de Alarmes encerrando execucao\n");
+	printf("Processo de Alarmes encerrado\n");
 	Sleep(3000);
 }
 
