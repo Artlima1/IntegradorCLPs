@@ -82,8 +82,9 @@ HANDLE hSwitchAlarmes;
 HANDLE hEsc;
 HANDLE hMailslot;
 HANDLE hMsg;
-HANDLE msg_alarme, msg_diag55;
-HANDLE hAlarmes[2];
+HANDLE hSemaforos[2];
+HANDLE semaforo_alarme;
+HANDLE semaforo_diag55;
 int ret = 0;
 BOOL MS;
 char msg[150];
@@ -107,19 +108,15 @@ int main()
 		printf("ERROR : %d", GetLastError());
 	}
 
-	msg_alarme = OpenEvent(EVENT_MODIFY_STATE | SYNCHRONIZE, FALSE, "msg_alarme");
-	if (msg_alarme == NULL)
+	semaforo_alarme = OpenSemaphore(SEMAPHORE_MODIFY_STATE | SYNCHRONIZE, FALSE, "msg_alarme");
+	if (semaforo_alarme == NULL)
 	{
 		printf("Erro na abertura do evento de alarmes : %d\n", GetLastError());
 	}
-	msg_diag55 = OpenEvent(EVENT_MODIFY_STATE | SYNCHRONIZE, FALSE, "msg_diag55");
-	if (!msg_diag55)
-	{
-		printf("Erro na abertura do evento de alarmes: %d\n", GetLastError());
-	}
+	semaforo_diag55 = OpenSemaphore(SEMAPHORE_MODIFY_STATE | SYNCHRONIZE, FALSE, "msg_diag55");
+	hSemaforos[0] = semaforo_alarme;
+	hSemaforos[1] = semaforo_diag55;
 
-	hAlarmes[0] = msg_alarme;
-	hAlarmes[1] = msg_diag55;
 
 	hEventos[0] = hEsc;
 	hEventos[1] = hSwitchAlarmes;
@@ -153,8 +150,8 @@ int main()
 		}
 		
 	
-		ret = 0;
-		ret = WaitForMultipleObjects(2, hAlarmes, FALSE, 0);
+		
+		ret = WaitForMultipleObjects(2, hSemaforos, FALSE, 0);
 		if(ret == WAIT_OBJECT_0)
 		{
 
@@ -174,7 +171,7 @@ int main()
 		}
 		if(ret == WAIT_OBJECT_0 + 1)
 		{
-			MS = ReadFile(hMailslot, msg, sizeof(alarme_envio), &bytes, NULL);
+			MS = ReadFile(hMailslot, &alarme, sizeof(alarme_envio), &bytes, NULL);
 			CheckForError(MS);
 			for (int i = 0; i < N_ALARMES; i++)
 			{
@@ -184,7 +181,7 @@ int main()
 					break;
 				}
 			}
-			printf("%s NSEQ: %05d FALHA NO HARDWARE CLP No %d", alarme.timestamp, diag55.nseq, diag55.id);
+			printf("%s NSEQ: %05d FALHA NO HARDWARE CLP No %s", alarme.timestamp, alarme.nseq, alarme.id);
 		}
 
 			
@@ -194,8 +191,9 @@ int main()
 	CloseHandle(hEsc);
 	CloseHandle(hMsg);
 	CloseHandle(hMailslot);
-	CloseHandle(msg_diag55);
-	CloseHandle(msg_alarme);
+	CloseHandle(semaforo_alarme);
+	CloseHandle(hSemaforos);
+	CloseHandle(semaforo_diag55);
 
 
 	printf("Processo de Alarmes encerrando execucao\n");

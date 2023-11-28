@@ -268,6 +268,7 @@ DWORD WINAPI Thread_CLP_Mensagens(int index) {
         printf("ERROR : %d", GetLastError());
     }
 
+
     hTimer[0] = hEsc;
     hTimer[1] = hSwitch;
     hTimer[2] = hTimerCLP[index];
@@ -353,6 +354,7 @@ DWORD WINAPI Thread_CLP_Monitoracao()
     HANDLE msg_alarme;
     alarme_t exemplo_data;/* RETIRAR DEPOIS */
     alarme_envio mensagem_alarme;
+    LONG valor_semaforo_anterior;
 
     hEsc = OpenEvent(EVENT_ALL_ACCESS, FALSE, "Esc");
     if (hEsc == NULL)
@@ -363,9 +365,8 @@ DWORD WINAPI Thread_CLP_Monitoracao()
     if (hSwitch == NULL) {
         printf("ERROR : %d", GetLastError());
     }
-    msg_alarme = CreateEvent(NULL, FALSE, FALSE, "msg_alarme");
+    msg_alarme = CreateSemaphore(NULL, 0, 10000, "msg_alarme");
     CheckForError(msg_alarme);
-
 
     WaitForSingleObject(hMsg, INFINITE);
 
@@ -406,11 +407,11 @@ DWORD WINAPI Thread_CLP_Monitoracao()
         decode_alarme(alarme_str, &exemplo_data, &mensagem_alarme);
         WaitForSingleObject(hMutex_MS, INFINITE);
 
-        if (SetEvent(msg_alarme) == 0)
+        if (ReleaseSemaphore(msg_alarme, 1, &valor_semaforo_anterior) == 0)
         {
             printf("%d\n", GetLastError());
         }
-        printf("%s\n", mensagem_alarme.tempo);
+       
         ms_envio = WriteFile(hMS, &mensagem_alarme, sizeof(alarme_envio), &bytes, NULL);
         if (ms_envio == 0)
         {
@@ -446,6 +447,7 @@ DWORD WINAPI Thread_Retirada_Mensagens() {
     char sNomeThread[] = "Thread de Retirada de Mensagens";
     BOOL ms_envio;
     alarme_envio mensagem;
+    LONG valor_semaforo_anterior;
 
     hEsc = OpenEvent(EVENT_ALL_ACCESS, FALSE, "Esc");
     if (hEsc == NULL) {
@@ -455,7 +457,7 @@ DWORD WINAPI Thread_Retirada_Mensagens() {
     if (hSwitchRetirada == NULL) {
         printf("ERROR : %d", GetLastError());
     }
-    msg_diag55 = CreateEvent(NULL, FALSE, FALSE, "msg_diag55");
+    msg_diag55 = CreateSemaphore(NULL,0, 10000, "msg_diag55");
 
 
     hFila[0] = hEsc;
@@ -518,7 +520,10 @@ DWORD WINAPI Thread_Retirada_Mensagens() {
             {
                 printf("Erro no envio do diag : %d", GetLastError());
             }
-            SetEvent(msg_diag55);
+            if (ReleaseSemaphore(msg_diag55, 1, &valor_semaforo_anterior) == 0)
+            {
+                printf("%d\n", GetLastError());
+            }
             ReleaseMutex(hMutex_MS);
 
         }
