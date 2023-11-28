@@ -138,8 +138,8 @@ DWORD WINAPI Thread_Retirada_Mensagens();
 
 int encode_msg(mensagem_t* dados, char* msg);
 int encode_alarme(alarme_t* dados, char* alarme);
-int decode_msg(char* msg, mensagem_t* dados, alarme_envio* mensagem);
-int decode_alarme(char* msg, alarme_t* dados, alarme_envio* mensagem);
+int decode_msg(char* msg, mensagem_t* dados, alarme_t* mensagem);
+int decode_alarme(char* msg, alarme_t* dados);
 DWORD wait_with_unbloqued_check(HANDLE* hEvents, char* threadName);
 
 /* --------------------------------------- Funcao Main ----------------------------------------- */
@@ -317,7 +317,7 @@ DWORD WINAPI Thread_CLP_Mensagens(int index) {
 
         /* Transformar dados em string separada por ; */
         encode_msg(&msg, msg_str);
-        //printf("Mensagem Gerada: %s\n", msg_str);
+        printf("Mensagem Gerada: %s\n", msg_str);
 
         /* Inserir na Fila de Mensagens e notificar mensagem a ser consumida */
         ret = wait_with_unbloqued_check(hFila, sNomeThread); /* Aguarda estar desbloqueado e ter o mutex da fila */
@@ -353,7 +353,6 @@ DWORD WINAPI Thread_CLP_Monitoracao()
     BOOL ms_envio;
     HANDLE msg_alarme;
     alarme_t exemplo_data;/* RETIRAR DEPOIS */
-    alarme_envio mensagem_alarme;
     LONG valor_semaforo_anterior;
 
     hEsc = OpenEvent(EVENT_ALL_ACCESS, FALSE, "Esc");
@@ -404,15 +403,14 @@ DWORD WINAPI Thread_CLP_Monitoracao()
         printf("Alarme Gerado: %s\n", alarme_str);
 
         /* Exemplo decode RETIRAR DEPOIS*/
-        decode_alarme(alarme_str, &exemplo_data, &mensagem_alarme);
+        decode_alarme(alarme_str, &exemplo_data);
         WaitForSingleObject(hMutex_MS, INFINITE);
 
         if (ReleaseSemaphore(msg_alarme, 1, &valor_semaforo_anterior) == 0)
         {
             printf("%d\n", GetLastError());
         }
-       
-        ms_envio = WriteFile(hMS, &mensagem_alarme, sizeof(alarme_envio), &bytes, NULL);
+        ms_envio = WriteFile(hMS, &exemplo_data, sizeof(alarme_t), &bytes, NULL);
         if (ms_envio == 0)
         {
             printf("Escrita falhou: %d\n", GetLastError());
@@ -446,7 +444,7 @@ DWORD WINAPI Thread_Retirada_Mensagens() {
     int evento_atual = -1;
     char sNomeThread[] = "Thread de Retirada de Mensagens";
     BOOL ms_envio;
-    alarme_envio mensagem;
+    alarme_t mensagem;
     LONG valor_semaforo_anterior;
 
     hEsc = OpenEvent(EVENT_ALL_ACCESS, FALSE, "Esc");
@@ -515,7 +513,7 @@ DWORD WINAPI Thread_Retirada_Mensagens() {
         if (msg_data.diag == 55)
         {
             WaitForSingleObject(hMutex_MS, INFINITE);
-            ms_envio = WriteFile(hMS, &mensagem, sizeof(alarme_envio), &bytes, NULL);
+            ms_envio = WriteFile(hMS, &mensagem, sizeof(alarme_t), &bytes, NULL);
             if (!ms_envio)
             {
                 printf("Erro no envio do diag : %d", GetLastError());
@@ -624,7 +622,7 @@ int encode_alarme(alarme_t* dados, char* alarme) {
     return 1;
 }
 
-int decode_msg(char* msg, mensagem_t* dados, alarme_envio* mensagem) {
+int decode_msg(char* msg, mensagem_t* dados, alarme_t* mensagem) {
     char string_dado[20];
     int pos_atual = 0;
 
@@ -634,10 +632,11 @@ int decode_msg(char* msg, mensagem_t* dados, alarme_envio* mensagem) {
     pos_atual += MSG_NSEQ_TAM + 1;
     mensagem->nseq = dados->nseq;
 
+
     strncpy_s(string_dado, 20, &msg[pos_atual], MSG_ID_TAM);
     string_dado[MSG_ID_TAM] = '\0';
     dados->id = atoi(string_dado);
-    strncpy_s(mensagem->id, 3, string_dado, MSG_ID_TAM);
+    strncpy_s(mensagem->id, ALARME_ID_TAM, string_dado, MSG_ID_TAM);
     pos_atual += MSG_ID_TAM + 1;
    
 
@@ -664,23 +663,25 @@ int decode_msg(char* msg, mensagem_t* dados, alarme_envio* mensagem) {
     strncpy_s(string_dado, 20, &msg[pos_atual], 2);
     string_dado[MSG_TEMP_TAM] = '\0';
     dados->timestamp.wHour = atoi(string_dado);
+    mensagem->timestamp.wHour = dados->timestamp.wHour;
     pos_atual += 3;
 
     strncpy_s(string_dado, 20, &msg[pos_atual], 2);
     string_dado[MSG_TEMP_TAM] = '\0';
     dados->timestamp.wMinute = atoi(string_dado);
+    mensagem->timestamp.wMinute = dados->timestamp.wMinute;
     pos_atual += 3;
 
     strncpy_s(string_dado, 20, &msg[pos_atual], 2);
     string_dado[MSG_TEMP_TAM] = '\0';
     dados->timestamp.wSecond = atoi(string_dado);
+    mensagem->timestamp.wSecond = dados->timestamp.wSecond;
     pos_atual += 3;
 }
 
-int decode_alarme(char* msg, alarme_t* dados, alarme_envio* mensagem) {
+int decode_alarme(char* msg, alarme_t* dados) {
     char string_dado[20];
     int pos_atual = 0;
-    string str;
     
    
 
@@ -688,35 +689,31 @@ int decode_alarme(char* msg, alarme_t* dados, alarme_envio* mensagem) {
     string_dado[ALARME_NSEQ_TAM] = '\0';
     dados->nseq = atoi(string_dado);
     pos_atual += ALARME_NSEQ_TAM + 1;
-    mensagem->nseq = dados->nseq;
+
 
     strncpy_s(string_dado, 20, &msg[pos_atual], ALARME_ID_TAM);
     string_dado[ALARME_ID_TAM] = '\0';
     strncpy_s(dados->id, ALARME_ID_TAM + 1, &msg[pos_atual], ALARME_ID_TAM);
     dados->id[ALARME_ID_TAM] = '\0';
     pos_atual += ALARME_ID_TAM + 1;
-    strncpy_s(mensagem->id, ALARME_ID_TAM + 1, dados->id, ALARME_ID_TAM);
+ 
 
     strncpy_s(string_dado, 20, &msg[pos_atual], 2);
     string_dado[MSG_TEMP_TAM] = '\0';
     dados->timestamp.wHour = atoi(string_dado);
     pos_atual += 3;
-    strncpy_s(&mensagem->tempo[0], ALARME_TIMESTAMP_TAM+1, string_dado, 2);
-    mensagem->tempo[2] = ':';
+
     
     strncpy_s(string_dado, 20, &msg[pos_atual], 2);
     string_dado[MSG_TEMP_TAM] = '\0';
     dados->timestamp.wMinute = atoi(string_dado);
-    strncpy_s(&mensagem->tempo[3], ALARME_TIMESTAMP_TAM+1, string_dado, 2);
     pos_atual += 3;
-    mensagem->tempo[5] = ':';
+    
 
     strncpy_s(string_dado, 20, &msg[pos_atual], 2);
     string_dado[MSG_TEMP_TAM] = '\0';
     dados->timestamp.wSecond = atoi(string_dado);
-    strncpy_s(&mensagem->tempo[6], ALARME_TIMESTAMP_TAM + 1, string_dado, 2);
     pos_atual += 3;
-    mensagem->tempo[8] = '\0';
     
 }
 

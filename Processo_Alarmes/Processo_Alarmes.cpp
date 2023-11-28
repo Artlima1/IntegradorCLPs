@@ -89,7 +89,7 @@ int ret = 0;
 BOOL MS;
 char msg[150];
 DWORD bytes;
-alarme_envio alarme;
+alarme_t alarme;
 mensagem_t diag55;
 alarme_code_t texto;
 int tempo;
@@ -155,7 +155,7 @@ int main()
 		if(ret == WAIT_OBJECT_0)
 		{
 
-			MS = ReadFile(hMailslot, &alarme, sizeof(alarme_envio), &bytes, NULL);
+			MS = ReadFile(hMailslot, &alarme, sizeof(alarme_t), &bytes, NULL);
 			CheckForError(MS);
 			for (int i = 0; i < N_ALARMES; i++)
 			{
@@ -166,7 +166,7 @@ int main()
 				}
 			}
 			
-			printf("%s NSEQ: %05d ID: %s %s\n", alarme.timestamp, alarme.nseq, alarme.id, texto.descricao);
+			printf("%02d:%02d:%02d NSEQ: %05d ID: %s %s\n", alarme.timestamp.wHour,alarme.timestamp.wMinute,alarme.timestamp.wSecond, alarme.nseq, alarme.id, texto.descricao);
 			
 		}
 		if(ret == WAIT_OBJECT_0 + 1)
@@ -181,7 +181,7 @@ int main()
 					break;
 				}
 			}
-			printf("%s NSEQ: %05d FALHA NO HARDWARE CLP No %s", alarme.timestamp, alarme.nseq, alarme.id);
+			printf("%02d:%02d:%02d NSEQ: %05d FALHA NO HARDWARE CLP No %s", alarme.timestamp.wHour, alarme.timestamp.wMinute, alarme.timestamp.wSecond, alarme.nseq, alarme.id);
 		}
 
 			
