@@ -59,7 +59,6 @@ int bloqueio = 0;
 HANDLE hMutex_nseq_msg;
 LPSTR tempo;
 
-
 typedef struct {
     int nseq;                   // N mero sequencial da mensagem
     char id[ALARME_ID_TAM + 1];   // Identifica  o do CLP
@@ -79,7 +78,6 @@ typedef struct {
     char tempo[ALARME_TIMESTAMP_TAM+50];
 }alarme_envio;
 
-
 alarme_code_t lista_alarmes[N_ALARMES] = {
     {"A2", "Esteira Parou"},
     {"T1", "Temperatura baixa para a reacao"},
@@ -89,15 +87,17 @@ alarme_code_t lista_alarmes[N_ALARMES] = {
 };
 /* ----------------------- Estrutura Lista Circular de Mensagens -------------------------------------- */
 
-typedef struct { char msg[MSG_TAM_TOT + 1]; } msg_na_fila_t;
+typedef struct {
+    int pos_livre;
+    int pos_ocupada;
+    int total;
+    HANDLE hMutex;
+    HANDLE hSemConsumir;
+    HANDLE hSemProduzir;
+    char fila[MSG_LIMITE][MSG_TAM_TOT + 1];
+} lista_circular_msg_t;
 
-
-msg_na_fila_t fila_msg[MSG_LIMITE]; // Lista circular 1
-int pos_livre = 0; int pos_ocupada = 0;	// Contadores para lista circular
-HANDLE hMutexFilaMsg;
-HANDLE hSemConsumirMsg;
-HANDLE hSemProduzirMsg;
-int total_mensagem = 0;
+lista_circular_msg_t ListaMsg1;
 
 /* ------------------------ Declarações para Maislot --------------------------*/
 HANDLE hMutex_MS;
@@ -153,14 +153,14 @@ int main() {
     hMutex_nseq_msg = CreateMutex(NULL, FALSE, "MUTEX_NSEQ_MSG");
     CheckForError(hMutex_nseq_msg);
 
-    hMutexFilaMsg = CreateMutex(NULL, FALSE, "MUTEX_FILA");
-    CheckForError(hMutex_nseq_msg);
+    ListaMsg1.hMutex = CreateMutex(NULL, FALSE, "MUTEX_FILA1");
+    CheckForError(ListaMsg1.hMutex);
 
-    hSemConsumirMsg = CreateSemaphore(NULL, 0, MSG_LIMITE, "SEM_CONSUMIR");
-    CheckForError(hSemConsumirMsg);
+    ListaMsg1.hSemConsumir = CreateSemaphore(NULL, 0, MSG_LIMITE, "SEM_CONSUMIR_FILA1");
+    CheckForError(ListaMsg1.hSemConsumir);
 
-    hSemProduzirMsg = CreateSemaphore(NULL, MSG_LIMITE, MSG_LIMITE, "SEM_PRODUZIR");
-    CheckForError(hSemProduzirMsg);
+    ListaMsg1.hSemProduzir = CreateSemaphore(NULL, MSG_LIMITE, MSG_LIMITE, "SEM_PRODUZIR_FILA1");
+    CheckForError(ListaMsg1.hSemProduzir);
 
     hMsg = CreateEvent(NULL, TRUE, FALSE, "msg");
     CheckForError(hMsg);
@@ -233,9 +233,9 @@ int main() {
     CloseHandle(hTimerMonit);
 
     CloseHandle(hMutex_nseq_msg);
-    CloseHandle(hMutexFilaMsg);
-    CloseHandle(hSemConsumirMsg);
-    CloseHandle(hSemProduzirMsg);
+    CloseHandle(ListaMsg1.hMutex);
+    CloseHandle(ListaMsg1.hSemProduzir);
+    CloseHandle(ListaMsg1.hSemConsumir);
     CloseHandle(hMutex_MS);
     CloseHandle(hMsg);
 
@@ -252,7 +252,7 @@ DWORD WINAPI Thread_CLP_Mensagens(int index) {
     HANDLE hEsc, hSwitch;
     HANDLE hTimer[3];
     HANDLE hNSeq[3];
-    HANDLE hFila[3];
+    HANDLE hListaMsg[3];
     HANDLE hProduzir[3];
     HANDLE msg_diag55;
 
@@ -277,13 +277,13 @@ DWORD WINAPI Thread_CLP_Mensagens(int index) {
     hNSeq[1] = hSwitch;
     hNSeq[2] = hMutex_nseq_msg;
 
-    hFila[0] = hEsc;
-    hFila[1] = hSwitch;
-    hFila[2] = hMutexFilaMsg;
+    hListaMsg[0] = hEsc;
+    hListaMsg[1] = hSwitch;
+    hListaMsg[2] = ListaMsg1.hMutex;
 
     hProduzir[0] = hEsc;
     hProduzir[1] = hSwitch;
-    hProduzir[2] = hSemProduzirMsg;
+    hProduzir[2] = ListaMsg1.hSemProduzir;
 
     while(1) {
         /* Aguarda Temporizacao */
@@ -291,12 +291,12 @@ DWORD WINAPI Thread_CLP_Mensagens(int index) {
         if(ret != 0) break; /* Esc pressionado */
 
         /* Verificar se há espaço disponivel na fila */
-        ret = wait_with_unbloqued_check(hFila, sNomeThread); /* Aguarda estar desbloqueado e ter o mutex da fila */
+        ret = wait_with_unbloqued_check(hListaMsg, sNomeThread); /* Aguarda estar desbloqueado e ter o mutex da fila */
         if (ret != 0) break; /* Esc pressionado */
-        if (total_mensagem == MSG_LIMITE) {
+        if (ListaMsg1.total == MSG_LIMITE) {
             printf("Fila cheia\n");
         }
-        ReleaseMutex(hMutexFilaMsg);
+        ReleaseMutex(ListaMsg1.hMutex);
         ret = wait_with_unbloqued_check(hProduzir, sNomeThread); /* Aguarda estar desbloqueado e semáforo de producao */
         if (ret != 0) break; /* Esc pressionado */
 
@@ -320,13 +320,13 @@ DWORD WINAPI Thread_CLP_Mensagens(int index) {
         printf("Mensagem Gerada: %s\n", msg_str);
 
         /* Inserir na Fila de Mensagens e notificar mensagem a ser consumida */
-        ret = wait_with_unbloqued_check(hFila, sNomeThread); /* Aguarda estar desbloqueado e ter o mutex da fila */
+        ret = wait_with_unbloqued_check(hListaMsg, sNomeThread); /* Aguarda estar desbloqueado e ter o mutex da fila */
         if (ret != 0) break; /* Esc pressionado */
-        total_mensagem++;
-        memcpy(&fila_msg[pos_livre].msg, msg_str, MSG_TAM_TOT);
-        pos_livre = (pos_livre + 1) % MSG_LIMITE;
-        ReleaseMutex(hMutexFilaMsg);
-        ReleaseSemaphore(hSemConsumirMsg, 1, NULL);
+        ListaMsg1.total++;
+        memcpy(ListaMsg1.fila[ListaMsg1.pos_livre], msg_str, MSG_TAM_TOT);
+        ListaMsg1.pos_livre = (ListaMsg1.pos_livre + 1) % MSG_LIMITE;
+        ReleaseMutex(ListaMsg1.hMutex);
+        ReleaseSemaphore(ListaMsg1.hSemConsumir, 1, NULL);
     }
 
     CloseHandle(hEsc);
@@ -435,11 +435,12 @@ DWORD WINAPI Thread_Retirada_Mensagens() {
     DWORD ret;
     DWORD bytes;
     HANDLE hEsc, hSwitchRetirada;
-    HANDLE hFila[3];
+    HANDLE hListaMsg[3];
     HANDLE hConsumir[3];
     HANDLE hMS;
     HANDLE msg_diag55;
-    msg_na_fila_t msg;
+
+    char sMsg[MSG_TAM_TOT + 1];
     mensagem_t msg_data;
     int evento_atual = -1;
     char sNomeThread[] = "Thread de Retirada de Mensagens";
@@ -458,15 +459,13 @@ DWORD WINAPI Thread_Retirada_Mensagens() {
     msg_diag55 = CreateSemaphore(NULL,0, 10000, "msg_diag55");
 
 
-    hFila[0] = hEsc;
-    hFila[1] = hSwitchRetirada;
-    hFila[2] = hMutexFilaMsg;
+    hListaMsg[0] = hEsc;
+    hListaMsg[1] = hSwitchRetirada;
+    hListaMsg[2] = ListaMsg1.hMutex;
 
     hConsumir[0] = hEsc;
     hConsumir[1] = hSwitchRetirada;
-    hConsumir[2] = hSemConsumirMsg;
-
-
+    hConsumir[2] = ListaMsg1.hSemConsumir;
 
     WaitForSingleObject(hMsg, INFINITE);
 
@@ -491,14 +490,14 @@ DWORD WINAPI Thread_Retirada_Mensagens() {
         ret = wait_with_unbloqued_check(hConsumir, sNomeThread); /* Aguarda estar desbloqueado e semáforo de consumo */
         if (ret != 0) break; /* Esc pressionado */
 
-        ret = wait_with_unbloqued_check(hFila, sNomeThread); /* Aguarda estar desbloqueado e semáforo de consumo */
+        ret = wait_with_unbloqued_check(hListaMsg, sNomeThread); /* Aguarda estar desbloqueado e semáforo de consumo */
         if (ret != 0) break; /* Esc pressionado */
-        memcpy(&msg.msg, &fila_msg[pos_ocupada].msg, MSG_TAM_TOT);
-        pos_ocupada = (pos_ocupada + 1) % MSG_LIMITE;
-        total_mensagem--;
-        ReleaseMutex(hMutexFilaMsg);
+        memcpy(sMsg, ListaMsg1.fila[ListaMsg1.pos_ocupada], MSG_TAM_TOT);
+        ListaMsg1.pos_ocupada = (ListaMsg1.pos_ocupada + 1) % MSG_LIMITE;
+        ListaMsg1.total--;
+        ReleaseMutex(ListaMsg1.hMutex);
 
-        decode_msg(msg.msg, &msg_data, &mensagem);
+        decode_msg(sMsg, &msg_data, &mensagem);
         printf("Mensagem Retirada: %d %d %d %f %f %f %d %d %d\n",
             msg_data.nseq,
             msg_data.id,
@@ -527,13 +526,13 @@ DWORD WINAPI Thread_Retirada_Mensagens() {
         }
 
         /* Libera producao */
-        ReleaseSemaphore(hSemProduzirMsg, 1, NULL);
+        ReleaseSemaphore(ListaMsg1.hSemProduzir, 1, NULL);
     }
 
     CloseHandle(hEsc);
     CloseHandle(hSwitchRetirada);
     CloseHandle(hMS);
-    CloseHandle(hFila);
+    CloseHandle(hListaMsg);
     CloseHandle(hConsumir);
     CloseHandle(msg_diag55);
     printf("Thread Retirada foi finalizada\n");
