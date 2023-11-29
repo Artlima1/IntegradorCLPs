@@ -253,6 +253,7 @@ int main() {
 /* --------------------------------------- Threads ----------------------------------------- */
 
 DWORD WINAPI Thread_CLP_Mensagens(int index) {
+    srand(GetCurrentThreadId());
     DWORD ret;
     mensagem_t msg;
     char msg_str[MSG_TAM_TOT + MSG_TAM_TOT];

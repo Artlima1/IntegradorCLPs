@@ -7,6 +7,29 @@
 #include <time.h>
 #include "CheckForError.h"; 
 
+/* ----------------------- Estrutura Dados Mensagem -------------------------------------- */
+
+#define DELIMITADOR_CAMPO ";"
+#define DIAG_FALHA 55
+#define MSG_TAM_TOT 40
+#define MSG_NSEQ_TAM 5
+#define MSG_ID_TAM 1
+#define MSG_DIAG_TAM 2
+#define MSG_PRES_INTERNA_TAM 6
+#define MSG_PRES_INJECAO_TAM 6
+#define MSG_TEMP_TAM 6
+#define MSG_TIMESTAMP_TAM 8
+
+typedef struct {
+    int nseq;               // N mero sequencial da mensagem
+    int id;                 // Identifica  o do CLP
+    int diag;               // Diagn stico dos cart es do CLP
+    float pressao_interna;  // Press o interna na panela de gusa
+    float pressao_injecao;  // Press o de inje  o do nitrog nio
+    float temp;             // Temperatura na panela
+    SYSTEMTIME timestamp;   // Horas da mensagem
+} mensagem_t;
+
 /* ----------------------- Estrutura Lista Circular de Mensagens -------------------------------------- */
 
 #define MSG_TAM_TOT 40
@@ -26,7 +49,12 @@ typedef struct {
     lista_circular_t * lc;
 } lista_multithread;
 
+/* ---------------------------- Declaracao Funções Auxiliares -------------------------------------- */
+
 DWORD wait_with_unbloqued_check(HANDLE* hEvents, char* threadName);
+int decode_msg(char* msg, mensagem_t* dados);
+
+/* -------------------------------- Funcao Principal -------------------------------------- */
 
 int main()
 {
@@ -37,6 +65,7 @@ int main()
 	HANDLE hLista[3];
 	HANDLE hConsumir[3];
 	char msg[MSG_TAM_TOT + 1];
+	mensagem_t msg_data;
 	int ret;
 	char sNomeThread[] = "Thread Exibição de Dados";
 
@@ -83,8 +112,16 @@ int main()
 		ReleaseMutex(ListaMsg.hMutex);
         ReleaseSemaphore(ListaMsg.hSemProduzir, 1, NULL);
 
-		msg[MSG_TAM_TOT] = '\0';
-		printf("Recebida: %s\n", msg);
+		decode_msg(msg, &msg_data);
+		printf("%02d:%02d:%02d NSEQ: %05d PR INT: %04.1f PR N2: %04.1f TEMP: %04.1f\n", 
+			msg_data.timestamp.wHour,
+			msg_data.timestamp.wMinute,
+			msg_data.timestamp.wSecond,
+			msg_data.nseq, 
+			msg_data.pressao_interna, 
+			msg_data.pressao_injecao,
+			msg_data.temp
+		);
    	}
 
 	CloseHandle(hSwitchDados);
@@ -97,6 +134,8 @@ int main()
 	Sleep(3000);
 }
 
+
+/* ---------------------------- Implementação Funções Auxiliares -------------------------------------- */
 
 DWORD wait_with_unbloqued_check(HANDLE* hEvents, char* threadName) {
     DWORD ret = 0;
@@ -120,4 +159,54 @@ DWORD wait_with_unbloqued_check(HANDLE* hEvents, char* threadName) {
     else {
         return 1;
     }
+}
+
+int decode_msg(char* msg, mensagem_t* dados) {
+    char string_dado[20];
+    int pos_atual = 0;
+
+    strncpy_s(string_dado, 20, &msg[pos_atual], MSG_NSEQ_TAM);
+    string_dado[MSG_NSEQ_TAM] = '\0';
+    dados->nseq = atoi(string_dado);
+    pos_atual += MSG_NSEQ_TAM + 1;
+
+    strncpy_s(string_dado, 20, &msg[pos_atual], MSG_ID_TAM);
+    string_dado[MSG_ID_TAM] = '\0';
+    dados->id = atoi(string_dado);
+    pos_atual += MSG_ID_TAM + 1;
+
+    strncpy_s(string_dado, 20, &msg[pos_atual], MSG_DIAG_TAM);
+    string_dado[MSG_DIAG_TAM] = '\0';
+    dados->diag = atoi(string_dado);
+    pos_atual += MSG_DIAG_TAM + 1;
+
+    strncpy_s(string_dado, 20, &msg[pos_atual], MSG_PRES_INTERNA_TAM);
+    string_dado[MSG_PRES_INTERNA_TAM] = '\0';
+    dados->pressao_interna = atof(string_dado);
+    pos_atual += MSG_PRES_INTERNA_TAM + 1;
+
+    strncpy_s(string_dado, 20, &msg[pos_atual], MSG_PRES_INJECAO_TAM);
+    string_dado[MSG_PRES_INJECAO_TAM] = '\0';
+    dados->pressao_injecao = atof(string_dado);
+    pos_atual += MSG_PRES_INJECAO_TAM + 1;
+
+    strncpy_s(string_dado, 20, &msg[pos_atual], MSG_TEMP_TAM);
+    string_dado[MSG_TEMP_TAM] = '\0';
+    dados->temp = atof(string_dado);
+    pos_atual += MSG_TEMP_TAM + 1;
+
+    strncpy_s(string_dado, 20, &msg[pos_atual], 2);
+    string_dado[MSG_TEMP_TAM] = '\0';
+    dados->timestamp.wHour = atoi(string_dado);
+    pos_atual += 3;
+
+    strncpy_s(string_dado, 20, &msg[pos_atual], 2);
+    string_dado[MSG_TEMP_TAM] = '\0';
+    dados->timestamp.wMinute = atoi(string_dado);
+    pos_atual += 3;
+
+    strncpy_s(string_dado, 20, &msg[pos_atual], 2);
+    string_dado[MSG_TEMP_TAM] = '\0';
+    dados->timestamp.wSecond = atoi(string_dado);
+    pos_atual += 3;
 }
