@@ -62,18 +62,14 @@ DWORD wait_with_unbloqued_check(HANDLE* hEvents, int N, char* threadName);
 int main()
 {
 	char sNomeThread[] = "Thread Exibicao de Alarmes";
-	HANDLE hSwitchAlarmes;
-	HANDLE hEsc;
-	HANDLE hSemAlarmeCartoes;
-	HANDLE hSemAlarmeCritico;
-	HANDLE hEventos[4];
-	HANDLE hMailslot;
+	HANDLE hSwitchAlarmes, hEsc, hSemAlarmeCartoes, hSemAlarmeCritico, hEventos[4], hMailslot;
 	int ret;
 	BOOL MS;
 	DWORD bytes;
+	char buf[MSG_TAM_TOT];
 	alarme_t alarme;
 	alarme_code_t alarme_texto;
-	mensagem_t msg_data;
+	mensagem_t msg;
 
 	hSwitchAlarmes = OpenEvent(EVENT_ALL_ACCESS, FALSE, "Alarmes");
 	CheckForError(hSwitchAlarmes);
@@ -101,8 +97,9 @@ int main()
 		ret = wait_with_unbloqued_check(hEventos, 4, sNomeThread);
 		if(ret == 0) break;
 		if(ret == 2) {
-			MS = ReadFile(hMailslot, &alarme, sizeof(alarme_t), &bytes, NULL);
+			MS = ReadFile(hMailslot, buf, ALARME_TAM_TOT, &bytes, NULL);
 			CheckForError(MS);
+			decode_alarme(buf, &alarme);
 			for (int i = 0; i < N_ALARMES; i++) {
 				if (strcmp(alarme.id, lista_alarmes[i].id) == 0) {
 					memcpy(&alarme_texto, &lista_alarmes[i], sizeof(alarme_code_t));
@@ -112,8 +109,9 @@ int main()
 			printf("%02d:%02d:%02d NSEQ: %05d ID: %s %s\n", alarme.timestamp.wHour,alarme.timestamp.wMinute, alarme.timestamp.wSecond, alarme.nseq, alarme.id, alarme_texto.descricao);
 		}
 		if(ret == 3) {
-			MS = ReadFile(hMailslot, &msg_data, sizeof(mensagem_t), &bytes, NULL);
-			printf("%02d:%02d:%02d NSEQ: %05d FALHA NO HARDWARE CLP No %d\n", msg_data.timestamp.wHour, msg_data.timestamp.wMinute, msg_data.timestamp.wSecond, msg_data.nseq, msg_data.id);
+			MS = ReadFile(hMailslot, buf, MSG_TAM_TOT, &bytes, NULL);
+			decode_msg(buf, &msg);
+			printf("%02d:%02d:%02d NSEQ: %05d FALHA NO HARDWARE CLP No %d\n", msg.timestamp.wHour, msg.timestamp.wMinute, msg.timestamp.wSecond, msg.nseq, msg.id);
 		}
 
 			
@@ -182,7 +180,6 @@ int decode_msg(char* msg, mensagem_t* dados) {
 int decode_alarme(char* msg, alarme_t* dados) {
 	char string_dado[20];
 	int pos_atual = 0;
-
 
 	strncpy_s(string_dado, 20, &msg[pos_atual], ALARME_NSEQ_TAM);
 	string_dado[ALARME_NSEQ_TAM] = '\0';

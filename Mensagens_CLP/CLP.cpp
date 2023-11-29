@@ -72,12 +72,6 @@ typedef struct {
     char descricao[100];
 } alarme_code_t;
 
-typedef struct {
-    int nseq;                   // N mero sequencial da mensagem
-    char id[ALARME_ID_TAM + 1];   // Identifica  o do CLP
-    char tempo[ALARME_TIMESTAMP_TAM+50];
-}alarme_envio;
-
 alarme_code_t lista_alarmes[N_ALARMES] = {
     {"A2", "Esteira Parou"},
     {"T1", "Temperatura baixa para a reacao"},
@@ -416,7 +410,7 @@ DWORD WINAPI Thread_CLP_Monitoracao()
         ret = wait_with_unbloqued_check(hMailslot, sNomeThread); /* Aguarda estar desbloqueado e com Mutex do mailslot */
         if (ret != 0) break; /* Esc pressionado */
         if(AlarmesMS.disponivel == TRUE){
-            ms_envio = WriteFile(AlarmesMS.hMailSlot, &alarme, sizeof(alarme_t), &bytes, NULL);
+            ms_envio = WriteFile(AlarmesMS.hMailSlot, sAlarme, ALARME_TAM_TOT, &bytes, NULL);
             CheckForError(ms_envio);
             ret = ReleaseSemaphore(AlarmesMS.hSemAlarmeCritico, 1, &semAnt);
             if(ret == 0){
@@ -528,7 +522,7 @@ DWORD WINAPI Thread_Retirada_Mensagens() {
             ret = wait_with_unbloqued_check(hMailslot, sNomeThread); /* Aguarda estar desbloqueado e com Mutex do mailslot */
             if (ret != 0) break; /* Esc pressionado */
             if(AlarmesMS.disponivel == TRUE){
-                ms_envio = WriteFile(AlarmesMS.hMailSlot, &msg_data, sizeof(mensagem_t), &bytes, NULL);
+                ms_envio = WriteFile(AlarmesMS.hMailSlot, sMsg, MSG_TAM_TOT, &bytes, NULL);
                 CheckForError(ms_envio);
                 ReleaseSemaphore(AlarmesMS.hSemAlarmeCartao, 1, NULL);
             }
