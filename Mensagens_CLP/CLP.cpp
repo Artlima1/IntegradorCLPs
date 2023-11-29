@@ -413,10 +413,6 @@ DWORD WINAPI Thread_CLP_Monitoracao()
             ms_envio = WriteFile(AlarmesMS.hMailSlot, sAlarme, ALARME_TAM_TOT, &bytes, NULL);
             CheckForError(ms_envio);
             ret = ReleaseSemaphore(AlarmesMS.hSemAlarmeCritico, 1, &semAnt);
-            if(ret == 0){
-                printf("Error: %d\n", GetLastError());
-            }
-            printf("Enviado: %ld\n", semAnt);
         }
         ReleaseMutex(AlarmesMS.hMutex);
 
