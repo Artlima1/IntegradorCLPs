@@ -6,20 +6,7 @@
 #include <time.h>
 #include <windows.h>
 
-#include <iostream>
-#include <iomanip>
-#include <ctime>
-#include <atlstr.h> 
-#include <sstream>  
-#include <cstring>
-#include <format>
-#include <cstdio>
-
-using namespace std;
 #include "CheckForError.h";
-
-#define N_ALARMES 7
-
 
 #define DIAG_FALHA 55
 #define MSG_LIMITE2 50
@@ -48,140 +35,85 @@ typedef struct {
 } mensagem_t;
 
 typedef struct {
-	char id[ALARME_ID_TAM + 1];
-	char descricao[100];
-} alarme_code_t;
-
-typedef struct {
 	int nseq;                   // N mero sequencial da mensagem
 	char id[ALARME_ID_TAM + 1];   // Identifica  o do CLP
 	SYSTEMTIME timestamp;       // Horas da mensagem
 } alarme_t;
 
 typedef struct {
-	int nseq;                   // N mero sequencial da mensagem
-	char id[ALARME_ID_TAM + 1];   // Identifica  o do CLP
-	char timestamp[ALARME_TIMESTAMP_TAM+50];
-}alarme_envio;
+	char id[ALARME_ID_TAM + 1];
+	char descricao[100];
+} alarme_code_t;
 
+#define N_ALARMES 5
 alarme_code_t lista_alarmes[N_ALARMES] = {
 	{"A2", "Esteira Parou"},
 	{"T1", "Temperatura baixa para a reacao"},
 	{"Q2", "Baixa pressao de injecao do nitrogenio"},
 	{"C4", "Concentracao baixa de carbono no sistema"},
-	{"C6", "Concentracao baixa de silicio no sistema"},
-	{"1", "FALHA DE HARDWARE CLP No. "},
-	{"2", "FALHA DE HARDWARE CLP No."}
+	{"C6", "Concentracao baixa de silicio no sistema"}
 };
 
 int decode_msg(char* msg, mensagem_t* dados);
 int decode_alarme(char* msg, alarme_t* dados);
 
-HANDLE hEventos[2];
-HANDLE hSwitchAlarmes;
-HANDLE hEsc;
-HANDLE hMailslot;
-HANDLE hMsg;
-HANDLE hSemaforos[2];
-HANDLE semaforo_alarme;
-HANDLE semaforo_diag55;
-int ret = 0;
-BOOL MS;
-char msg[150];
-DWORD bytes;
-alarme_t alarme;
-mensagem_t diag55;
-alarme_code_t texto;
-int tempo;
-char print_mensagem[20];
+DWORD wait_with_unbloqued_check(HANDLE* hEvents, int N, char* threadName);
 
 int main()
 {
+	char sNomeThread[] = "Thread Exibicao de Alarmes";
+	HANDLE hSwitchAlarmes;
+	HANDLE hEsc;
+	HANDLE hSemAlarmeCartoes;
+	HANDLE hSemAlarmeCritico;
+	HANDLE hEventos[4];
+	HANDLE hMailslot;
+	int ret;
+	BOOL MS;
+	DWORD bytes;
+	alarme_t alarme;
+	alarme_code_t alarme_texto;
+	mensagem_t msg_data;
 
 	hSwitchAlarmes = OpenEvent(EVENT_ALL_ACCESS, FALSE, "Alarmes");
-	if (hSwitchAlarmes == NULL) {
-		printf("ERROR : %d", GetLastError());
-	}
+	CheckForError(hSwitchAlarmes);
+
 	hEsc = OpenEvent(EVENT_ALL_ACCESS, FALSE, "Esc");
-	if (hEsc == NULL)
-	{
-		printf("ERROR : %d", GetLastError());
-	}
+	CheckForError(hEsc);
 
-	semaforo_alarme = OpenSemaphore(SEMAPHORE_MODIFY_STATE | SYNCHRONIZE, FALSE, "msg_alarme");
-	if (semaforo_alarme == NULL)
-	{
-		printf("Erro na abertura do evento de alarmes : %d\n", GetLastError());
-	}
-	semaforo_diag55 = OpenSemaphore(SEMAPHORE_MODIFY_STATE | SYNCHRONIZE, FALSE, "msg_diag55");
-	hSemaforos[0] = semaforo_alarme;
-	hSemaforos[1] = semaforo_diag55;
+	hSemAlarmeCritico = CreateSemaphore(NULL, 0, 10000, "SEM_ALARME_CRITICO");
+	CheckForError(hSemAlarmeCritico);
 
+	hSemAlarmeCartoes = CreateSemaphore(NULL, 0, 10000, "SEM_ALARME_CARTOES");
+	CheckForError(hSemAlarmeCartoes);
 
 	hEventos[0] = hEsc;
 	hEventos[1] = hSwitchAlarmes;
+	hEventos[2] = hSemAlarmeCritico;
+	hEventos[3] = hSemAlarmeCartoes;
 
-	hMailslot = CreateMailslot("\\\\.\\mailslot\\ms_alarmes",
-		0,
-		5,
-		NULL);
+	hMailslot = CreateMailslot("\\\\.\\mailslot\\ms_alarmes", 0, 5, NULL);
 	CheckForError(hMailslot != INVALID_HANDLE_VALUE);
 
-	hMsg = OpenEvent(EVENT_ALL_ACCESS, FALSE, "msg");
-	if (hMsg == NULL)
-	{
-		printf("Error no evento do MS : %d", GetLastError());
-	}
-
-
-	printf("Thread de alarmes Inicializada\n");
-	SetEvent(hMsg);
+	printf("%s Inicializada\n", sNomeThread);
 	while(1) 
 	{
-		ret = WaitForMultipleObjects(2, hEventos, FALSE, 0);
-		if (ret == WAIT_OBJECT_0) break;
-		if (ret == WAIT_OBJECT_0 + 1) {
-			printf("Thread de alarmes Bloqueada\n");
-			ret = WaitForMultipleObjects(2, hEventos, FALSE, INFINITE);
-			if (ret == WAIT_OBJECT_0) {
-				break;
-			}
-			printf("Thread de alarmes Desbloqueada\n");
-		}
-		
-	
-		
-		ret = WaitForMultipleObjects(2, hSemaforos, FALSE, 0);
-		if(ret == WAIT_OBJECT_0)
-		{
-
+		ret = wait_with_unbloqued_check(hEventos, 4, sNomeThread);
+		if(ret == 0) break;
+		if(ret == 2) {
 			MS = ReadFile(hMailslot, &alarme, sizeof(alarme_t), &bytes, NULL);
 			CheckForError(MS);
-			for (int i = 0; i < N_ALARMES; i++)
-			{
-				if (strcmp(alarme.id, lista_alarmes[i].id) == 0) 
-				{
-					memcpy(&texto, &lista_alarmes[i], sizeof(alarme_code_t));
+			for (int i = 0; i < N_ALARMES; i++) {
+				if (strcmp(alarme.id, lista_alarmes[i].id) == 0) {
+					memcpy(&alarme_texto, &lista_alarmes[i], sizeof(alarme_code_t));
 					break;
 				}
 			}
-			
-			printf("%02d:%02d:%02d NSEQ: %05d ID: %s %s\n", alarme.timestamp.wHour,alarme.timestamp.wMinute,alarme.timestamp.wSecond, alarme.nseq, alarme.id, texto.descricao);
-			
+			printf("%02d:%02d:%02d NSEQ: %05d ID: %s %s\n", alarme.timestamp.wHour,alarme.timestamp.wMinute, alarme.timestamp.wSecond, alarme.nseq, alarme.id, alarme_texto.descricao);
 		}
-		if(ret == WAIT_OBJECT_0 + 1)
-		{
-			MS = ReadFile(hMailslot, &alarme, sizeof(alarme_envio), &bytes, NULL);
-			CheckForError(MS);
-			for (int i = 0; i < N_ALARMES; i++)
-			{
-				if (strcmp(alarme.id, lista_alarmes[i].id) == 0)
-				{
-					memcpy(&texto, &lista_alarmes[i], sizeof(alarme_code_t));
-					break;
-				}
-			}
-			printf("%02d:%02d:%02d NSEQ: %05d FALHA NO HARDWARE CLP No %s", alarme.timestamp.wHour, alarme.timestamp.wMinute, alarme.timestamp.wSecond, alarme.nseq, alarme.id);
+		if(ret == 3) {
+			MS = ReadFile(hMailslot, &msg_data, sizeof(mensagem_t), &bytes, NULL);
+			printf("%02d:%02d:%02d NSEQ: %05d FALHA NO HARDWARE CLP No %d\n", msg_data.timestamp.wHour, msg_data.timestamp.wMinute, msg_data.timestamp.wSecond, msg_data.nseq, msg_data.id);
 		}
 
 			
@@ -189,12 +121,8 @@ int main()
 
 	CloseHandle(hSwitchAlarmes);
 	CloseHandle(hEsc);
-	CloseHandle(hMsg);
-	CloseHandle(hMailslot);
-	CloseHandle(semaforo_alarme);
-	CloseHandle(hSemaforos);
-	CloseHandle(semaforo_diag55);
-
+	CloseHandle(hSemAlarmeCritico);
+	CloseHandle(hSemAlarmeCartoes);
 
 	printf("Processo de Alarmes encerrado\n");
 	Sleep(3000);
@@ -283,4 +211,24 @@ int decode_alarme(char* msg, alarme_t* dados) {
 	pos_atual += 3;
 }
 
+DWORD wait_with_unbloqued_check(HANDLE* hEvents, int N, char* threadName) {
+    DWORD ret = 0;
 
+    do {
+        ret = WaitForMultipleObjects(N, hEvents, FALSE, INFINITE);
+		ret = ret - WAIT_OBJECT_0;
+        if (ret == 0) return 0;
+        if (ret == 1) { /* Tecla pressionada */
+            printf("Thread %s Bloqueada\n", threadName);
+            ret = WaitForMultipleObjects(2, hEvents, FALSE, INFINITE); /* Aguarda pressionar tecla novamente */
+            if (ret == WAIT_OBJECT_0) return 0;
+            printf("Thread %s Desbloqueada\n", threadName);
+        }
+		if(ret >= N){
+			printf("Error while waiting: %d\n", (int) GetLastError());
+			return 0;
+		}
+    } while (!(ret > 1 && ret < N)); /* Volta a aguardar handle quando desbloqueada */
+
+    return ret;
+}
