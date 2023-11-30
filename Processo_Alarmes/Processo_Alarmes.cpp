@@ -62,7 +62,7 @@ DWORD wait_with_unbloqued_check(HANDLE* hEvents, int N, char* threadName);
 int main()
 {
 	char sNomeThread[] = "Thread Exibicao de Alarmes";
-	HANDLE hSwitchAlarmes, hEsc, hSemAlarmeCartoes, hSemAlarmeCritico, hEventos[4], hMailslot;
+	HANDLE hSwitchAlarmes, hEsc, hSemAlarmeCartoes, hSemAlarmeCritico, hEventos[4], hMSCriticos, hMSCartoes;
 	int ret;
 	BOOL MS;
 	DWORD bytes;
@@ -88,8 +88,11 @@ int main()
 	hEventos[2] = hSemAlarmeCritico;
 	hEventos[3] = hSemAlarmeCartoes;
 
-	hMailslot = CreateMailslot("\\\\.\\mailslot\\ms_alarmes", 0, 5, NULL);
-	CheckForError(hMailslot != INVALID_HANDLE_VALUE);
+	hMSCriticos = CreateMailslot("\\\\.\\mailslot\\ms_alarmes_criticos", 0, 5, NULL);
+	CheckForError(hMSCriticos != INVALID_HANDLE_VALUE);
+
+	hMSCartoes = CreateMailslot("\\\\.\\mailslot\\ms_alarmes_cartoes", 0, 5, NULL);
+	CheckForError(hMSCartoes != INVALID_HANDLE_VALUE);
 
 	printf("%s Inicializada\n", sNomeThread);
 	while(1) 
@@ -97,7 +100,7 @@ int main()
 		ret = wait_with_unbloqued_check(hEventos, 4, sNomeThread);
 		if(ret == 0) break;
 		if(ret == 2) {
-			MS = ReadFile(hMailslot, buf, ALARME_TAM_TOT, &bytes, NULL);
+			MS = ReadFile(hMSCriticos, buf, ALARME_TAM_TOT, &bytes, NULL);
 			CheckForError(MS);
 			decode_alarme(buf, &alarme);
 			for (int i = 0; i < N_ALARMES; i++) {
@@ -109,7 +112,7 @@ int main()
 			printf("%02d:%02d:%02d NSEQ: %05d ID: %s %s\n", alarme.timestamp.wHour,alarme.timestamp.wMinute, alarme.timestamp.wSecond, alarme.nseq, alarme.id, alarme_texto.descricao);
 		}
 		if(ret == 3) {
-			MS = ReadFile(hMailslot, buf, MSG_TAM_TOT, &bytes, NULL);
+			MS = ReadFile(hMSCartoes, buf, MSG_TAM_TOT, &bytes, NULL);
 			decode_msg(buf, &msg);
 			printf("%02d:%02d:%02d NSEQ: %05d FALHA NO HARDWARE CLP No %d\n", msg.timestamp.wHour, msg.timestamp.wMinute, msg.timestamp.wSecond, msg.nseq, msg.id);
 		}

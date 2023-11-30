@@ -102,12 +102,8 @@ lista_multithread ListaMsg1;
 typedef struct {
     BOOL disponivel;
     HANDLE hMailSlot;
-    HANDLE hMutex;
-    HANDLE hSemAlarmeCritico;
-    HANDLE hSemAlarmeCartao;
+    HANDLE hSem;
 } mailslot_alarmes_t;
-
-mailslot_alarmes_t AlarmesMS;
 
 /* ------------------------------------- Estrutura Timers -------------------------------------- */
 #define MS_PARA_10NS 10000
@@ -149,7 +145,7 @@ int decode_msg(char* msg, mensagem_t* dados);
 int decode_alarme(char* msg, alarme_t* dados);
 DWORD wait_with_unbloqued_check(HANDLE* hEvents, char* threadName);
 BOOL abrir_lista2(HANDLE * hSection, lista_multithread * Lista, HANDLE * outMut, HANDLE * outSem);
-BOOL abrir_mailslot(mailslot_alarmes_t * MS);
+BOOL abrir_mailslot(mailslot_alarmes_t * MS, char * path, char * semName);
 
 /* --------------------------------------- Funcao Main ----------------------------------------- */
 
@@ -174,12 +170,8 @@ int main() {
     hMsg = CreateEvent(NULL, TRUE, FALSE, "msg");
     CheckForError(hMsg);
 
-    AlarmesMS.hMutex = CreateMutex(NULL, FALSE, "MUTEX_MS");
-    CheckForError(AlarmesMS.hMutex);
-
     ListaMsg1.lc = &listaCLPs;
-    AlarmesMS.disponivel = FALSE;
-    
+
     /* Criação dos CLPs de leitura */
     char sNomeTimer[15];
     for (int i = 0; i < N_CLP_MENSAGENS; i++) {
@@ -248,7 +240,6 @@ int main() {
     CloseHandle(ListaMsg1.hMutex);
     CloseHandle(ListaMsg1.hSemProduzir);
     CloseHandle(ListaMsg1.hSemConsumir);
-    CloseHandle(AlarmesMS.hMutex);
     CloseHandle(hMsg);
 
     printf("Processo CPLs encerrado\n");
@@ -356,14 +347,15 @@ DWORD WINAPI Thread_CLP_Monitoracao()
     srand(GetCurrentThreadId());
     HANDLE hMS;
     DWORD ret;
+    BOOL ms_envio;
     DWORD bytes = 0;
-    HANDLE hEsc, hSwitch, hTimer[3], hMailslot[3];
+    HANDLE hEsc, hSwitch, hTimer[3];
     char sAlarme[ALARME_TAM_TOT + ALARME_TAM_TOT];
     char sNomeThread[] = "Thread de Monitoracao";
     alarme_t alarme;
     LARGE_INTEGER PresetTimerMonit;
-    BOOL ms_envio;
-    LONG semAnt;
+    mailslot_alarmes_t MS;
+
 
     hEsc = OpenEvent(EVENT_ALL_ACCESS, FALSE, "Esc");
     if (hEsc == NULL)
@@ -379,19 +371,14 @@ DWORD WINAPI Thread_CLP_Monitoracao()
     hTimer[1] = hSwitch;
     hTimer[2] = hTimerMonit;
 
-    hMailslot[0] = hEsc;
-    hMailslot[1] = hSwitch;
-    hMailslot[2] = AlarmesMS.hMutex;
+    MS.disponivel = abrir_mailslot(&MS, "\\\\.\\mailslot\\ms_alarmes_criticos", "SEM_ALARME_CRITICO");
 
     while (1) {
 
         /* Caso mailsot estiver indisponível, tenta abri-lo */ 
-        ret = wait_with_unbloqued_check(hMailslot, sNomeThread); /* Aguarda estar desbloqueado e com Mutex do mailslot */
-        if (ret != 0) break; /* Esc pressionado */
-        if(AlarmesMS.disponivel == FALSE){
-            AlarmesMS.disponivel = abrir_mailslot(&AlarmesMS);
+        if(MS.disponivel == FALSE){
+            MS.disponivel = abrir_mailslot(&MS, "\\\\.\\mailslot\\ms_alarmes_criticos", "SEM_ALARME_CRITICO");
         }
-        ReleaseMutex(AlarmesMS.hMutex);
 
         /* Aguarda Temporizacao */
         ret = wait_with_unbloqued_check(hTimer, sNomeThread);
@@ -407,14 +394,11 @@ DWORD WINAPI Thread_CLP_Monitoracao()
         printf("Alarme Gerado: %s\n", sAlarme);
 
         /* Envia alarme se mailslot disponivel */
-        ret = wait_with_unbloqued_check(hMailslot, sNomeThread); /* Aguarda estar desbloqueado e com Mutex do mailslot */
-        if (ret != 0) break; /* Esc pressionado */
-        if(AlarmesMS.disponivel == TRUE){
-            ms_envio = WriteFile(AlarmesMS.hMailSlot, sAlarme, ALARME_TAM_TOT, &bytes, NULL);
+        if(MS.disponivel == TRUE){
+            ms_envio = WriteFile(MS.hMailSlot, sAlarme, ALARME_TAM_TOT, &bytes, NULL);
             CheckForError(ms_envio);
-            ret = ReleaseSemaphore(AlarmesMS.hSemAlarmeCritico, 1, &semAnt);
+            ret = ReleaseSemaphore(MS.hSem, 1, NULL);
         }
-        ReleaseMutex(AlarmesMS.hMutex);
 
         /* Dispara timer de disparo único após tempo aleatório */
         PresetTimerMonit.QuadPart = -(INTERVAL_MONIT_TIMER * MS_PARA_10NS);
@@ -424,6 +408,10 @@ DWORD WINAPI Thread_CLP_Monitoracao()
 
     CloseHandle(hEsc);
     CloseHandle(hSwitch);
+    if(MS.disponivel == TRUE){
+        CloseHandle(MS.hMailSlot);
+        CloseHandle(MS.hSem);
+    }
 
     printf("Thread Monitoracao de alarmes foi finalizada\n");
     return (0);
@@ -432,10 +420,12 @@ DWORD WINAPI Thread_CLP_Monitoracao()
 DWORD WINAPI Thread_Retirada_Mensagens() {
     DWORD ret;
     DWORD bytes;
-    HANDLE hEsc, hSwitchRetirada, hListaMsg1[3], hListaMsg2[3], hConsumir[3], hProduzir[3], hMailslot[3];
-    BOOL Lista2Disponivel = FALSE;
+    HANDLE hEsc, hSwitchRetirada, hListaMsg1[3], hListaMsg2[3], hConsumir[3], hProduzir[3];
+    BOOL Lista2Disponivel;
     lista_multithread ListaMsg2;
     HANDLE hSection;
+    mailslot_alarmes_t MS;
+    LONG prev;
 
     char sMsg[MSG_TAM_TOT + 1];
     mensagem_t msg_data;
@@ -459,10 +449,6 @@ DWORD WINAPI Thread_Retirada_Mensagens() {
     hConsumir[1] = hSwitchRetirada;
     hConsumir[2] = ListaMsg1.hSemConsumir;
 
-    hMailslot[0] = hEsc;
-    hMailslot[1] = hSwitchRetirada;
-    hMailslot[2] = AlarmesMS.hMutex;
-
     hListaMsg2[0] = hEsc;
     hListaMsg2[1] = hSwitchRetirada;
 
@@ -470,6 +456,9 @@ DWORD WINAPI Thread_Retirada_Mensagens() {
     hProduzir[1] = hSwitchRetirada;
 
     printf("Thread Retirada Inicializada\n");
+
+    MS.disponivel = abrir_mailslot(&MS, "\\\\.\\mailslot\\ms_alarmes_cartoes", "SEM_ALARME_CARTOES");
+    Lista2Disponivel = abrir_lista2(&hSection, &ListaMsg2, &hListaMsg2[2], &hProduzir[2]);
 
     while (1) 
     {
@@ -479,12 +468,9 @@ DWORD WINAPI Thread_Retirada_Mensagens() {
         }
 
         /* Caso mailsot estiver indisponível, tenta abri-lo */ 
-        ret = wait_with_unbloqued_check(hMailslot, sNomeThread); /* Aguarda estar desbloqueado e com Mutex do mailslot */
-        if (ret != 0) break; /* Esc pressionado */
-        if(AlarmesMS.disponivel == FALSE){
-            AlarmesMS.disponivel = abrir_mailslot(&AlarmesMS);
+        if(MS.disponivel == FALSE){
+            MS.disponivel = abrir_mailslot(&MS, "\\\\.\\mailslot\\ms_alarmes_cartoes", "SEM_ALARME_CARTOES");
         }
-        ReleaseMutex(AlarmesMS.hMutex);
 
         /* Se lista 2 disponivel, Verifica se há espaço  */
         if(Lista2Disponivel == TRUE){
@@ -515,14 +501,12 @@ DWORD WINAPI Thread_Retirada_Mensagens() {
         /* Trata mensagem */
         decode_msg(sMsg, &msg_data);
         if (msg_data.diag == 55) {
-            ret = wait_with_unbloqued_check(hMailslot, sNomeThread); /* Aguarda estar desbloqueado e com Mutex do mailslot */
-            if (ret != 0) break; /* Esc pressionado */
-            if(AlarmesMS.disponivel == TRUE){
-                ms_envio = WriteFile(AlarmesMS.hMailSlot, sMsg, MSG_TAM_TOT, &bytes, NULL);
+            ReleaseSemaphore(ListaMsg2.hSemProduzir, 1, NULL);
+            if(MS.disponivel == TRUE){
+                ms_envio = WriteFile(MS.hMailSlot, sMsg, MSG_TAM_TOT, &bytes, NULL);
                 CheckForError(ms_envio);
-                ReleaseSemaphore(AlarmesMS.hSemAlarmeCartao, 1, NULL);
+                ReleaseSemaphore(MS.hSem, 1, &prev);
             }
-            ReleaseMutex(AlarmesMS.hMutex);
         }
         else{
             /* Se lista 2 disponivel, deposita mensagem  */
@@ -545,6 +529,10 @@ DWORD WINAPI Thread_Retirada_Mensagens() {
         CloseHandle(ListaMsg2.hSemProduzir);
         ret=UnmapViewOfFile(ListaMsg2.lc);
         CheckForError(ret);
+    }
+    if(MS.disponivel == TRUE){
+        CloseHandle(MS.hMailSlot);
+        CloseHandle(MS.hSem);
     }
     CloseHandle(hEsc);
     CloseHandle(hSwitchRetirada);
@@ -770,21 +758,14 @@ BOOL abrir_lista2(HANDLE * hSection, lista_multithread * Lista, HANDLE * outMut,
     return ret;
 }
 
-BOOL abrir_mailslot(mailslot_alarmes_t * MS){
+BOOL abrir_mailslot(mailslot_alarmes_t * MS, char * path, char * semName){
     DWORD ret = FALSE;
     DWORD LastError;
 
-    MS->hMailSlot = CreateFile("\\\\.\\mailslot\\ms_alarmes", GENERIC_WRITE, FILE_SHARE_READ, NULL, OPEN_EXISTING, FILE_ATTRIBUTE_NORMAL, NULL);
+    MS->hMailSlot = CreateFile(path, GENERIC_WRITE, FILE_SHARE_READ, NULL, OPEN_EXISTING, FILE_ATTRIBUTE_NORMAL, NULL);
     if (MS->hMailSlot != INVALID_HANDLE_VALUE) {
-        MS->hSemAlarmeCritico = OpenSemaphore(SEMAPHORE_MODIFY_STATE | SYNCHRONIZE, TRUE, "SEM_ALARME_CRITICO");
-        CheckForError(MS->hSemAlarmeCritico);
-        MS->hSemAlarmeCartao = OpenSemaphore(SEMAPHORE_MODIFY_STATE | SYNCHRONIZE, TRUE, "SEM_ALARME_CARTOES");
-        CheckForError(MS->hSemAlarmeCartao);
-
-        ret = (
-            (MS->hSemAlarmeCritico != NULL) &&
-            (MS->hSemAlarmeCartao != NULL)
-        );
+        MS->hSem = OpenSemaphore(SEMAPHORE_MODIFY_STATE | SYNCHRONIZE, TRUE, semName);
+        ret = (MS->hSem != NULL);
     }
 
     if(ret == TRUE){
