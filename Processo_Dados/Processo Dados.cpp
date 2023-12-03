@@ -67,15 +67,15 @@ int main()
 	char msg[MSG_TAM_TOT + 1];
 	mensagem_t msg_data;
 	int ret;
-	char sNomeThread[] = "Thread Exibição de Dados";
+	char sNomeThread[] = "Exibicao de Dados";
 
 	ListaMsg.hMutex = CreateMutex(NULL, FALSE, "MUTEX_FILA2");
     CheckForError(ListaMsg.hMutex);
 
-    ListaMsg.hSemConsumir = CreateSemaphore(NULL, 0, MSG_LIMITE, "SEM_CONSUMIR_FILA2");
+    ListaMsg.hSemConsumir = CreateSemaphore(NULL, 0, 50, "SEM_CONSUMIR_FILA2");
     CheckForError(ListaMsg.hSemConsumir);
 
-    ListaMsg.hSemProduzir = CreateSemaphore(NULL, MSG_LIMITE, MSG_LIMITE, "SEM_PRODUZIR_FILA2");
+    ListaMsg.hSemProduzir = CreateSemaphore(NULL, 50, MSG_LIMITE, "SEM_PRODUZIR_FILA2");
     CheckForError(ListaMsg.hSemProduzir);
 
 	hSection = CreateFileMapping(INVALID_HANDLE_VALUE, NULL, PAGE_READWRITE, 0, sizeof(lista_circular_t), "LISTA_CIRCULAR_2");

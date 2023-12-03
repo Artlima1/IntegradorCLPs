@@ -161,7 +161,7 @@ int main() {
     ListaMsg1.hMutex = CreateMutex(NULL, FALSE, "MUTEX_FILA1");
     CheckForError(ListaMsg1.hMutex);
 
-    ListaMsg1.hSemConsumir = CreateSemaphore(NULL, 0, MSG_LIMITE, "SEM_CONSUMIR_FILA1");
+    ListaMsg1.hSemConsumir = CreateSemaphore(NULL, 0, 50, "SEM_CONSUMIR_FILA1");
     CheckForError(ListaMsg1.hSemConsumir);
 
     ListaMsg1.hSemProduzir = CreateSemaphore(NULL, MSG_LIMITE, MSG_LIMITE, "SEM_PRODUZIR_FILA1");
@@ -242,7 +242,7 @@ int main() {
     CloseHandle(ListaMsg1.hSemConsumir);
     CloseHandle(hMsg);
 
-    printf("Processo CPLs encerrado\n");
+    printf("Processo CLPs encerrado\n");
 }
 
 /* --------------------------------------- Threads ----------------------------------------- */
@@ -259,7 +259,7 @@ DWORD WINAPI Thread_CLP_Mensagens(int index) {
     HANDLE hListaMsg[3];
     HANDLE hProduzir[3];
     HANDLE msg_diag55;
-
+    HANDLE hTimeout;
     char sNomeThread[9];
     snprintf(sNomeThread, 9, "Leitura%d", index + 1);
 
@@ -271,7 +271,7 @@ DWORD WINAPI Thread_CLP_Mensagens(int index) {
     if (hSwitch == NULL) {
         printf("ERROR : %d", GetLastError());
     }
-
+    hTimeout = CreateEvent(NULL, FALSE, FALSE, "Htimeout");
 
     hTimer[0] = hEsc;
     hTimer[1] = hSwitch;
@@ -295,9 +295,11 @@ DWORD WINAPI Thread_CLP_Mensagens(int index) {
         if(ret != 0) break; /* Esc pressionado */
 
         /* Verificar se há espaço disponivel na fila */
+        //WaitForSingleObject(hTimeout, 30);
         ret = wait_with_unbloqued_check(hListaMsg, sNomeThread); /* Aguarda estar desbloqueado e ter o mutex da fila */
         if (ret != 0) break; /* Esc pressionado */
-        if (ListaMsg1.lc->total == MSG_LIMITE) {
+       
+        if (ListaMsg1.lc->total == 100) {
             printf("Lista 1 cheia\n");
         }
         ReleaseMutex(ListaMsg1.hMutex);
@@ -335,6 +337,7 @@ DWORD WINAPI Thread_CLP_Mensagens(int index) {
 
     CloseHandle(hEsc);
     CloseHandle(hSwitch);
+    CloseHandle(hTimeout);
 
 
 
@@ -351,7 +354,7 @@ DWORD WINAPI Thread_CLP_Monitoracao()
     DWORD bytes = 0;
     HANDLE hEsc, hSwitch, hTimer[3];
     char sAlarme[ALARME_TAM_TOT + ALARME_TAM_TOT];
-    char sNomeThread[] = "Thread de Monitoracao";
+    char sNomeThread[] = "de Monitoracao de alarmes";
     alarme_t alarme;
     LARGE_INTEGER PresetTimerMonit;
     mailslot_alarmes_t MS;
@@ -379,7 +382,7 @@ DWORD WINAPI Thread_CLP_Monitoracao()
         if(MS.disponivel == FALSE){
             MS.disponivel = abrir_mailslot(&MS, "\\\\.\\mailslot\\ms_alarmes_criticos", "SEM_ALARME_CRITICO");
         }
-
+        Sleep(30);
         /* Aguarda Temporizacao */
         ret = wait_with_unbloqued_check(hTimer, sNomeThread);
         if (ret != 0) break; /* Esc pressionado */
@@ -420,7 +423,7 @@ DWORD WINAPI Thread_CLP_Monitoracao()
 DWORD WINAPI Thread_Retirada_Mensagens() {
     DWORD ret;
     DWORD bytes;
-    HANDLE hEsc, hSwitchRetirada, hListaMsg1[3], hListaMsg2[3], hConsumir[3], hProduzir[3];
+    HANDLE hEsc, hSwitchRetirada, hListaMsg1[3], hListaMsg2[3], hConsumir[3], hProduzir[3], hTimeout;
     BOOL Lista2Disponivel;
     lista_multithread ListaMsg2;
     HANDLE hSection;
@@ -429,7 +432,7 @@ DWORD WINAPI Thread_Retirada_Mensagens() {
 
     char sMsg[MSG_TAM_TOT + 1];
     mensagem_t msg_data;
-    char sNomeThread[] = "Thread de Retirada de Mensagens";
+    char sNomeThread[] = "Retirada de Mensagens";
     BOOL ms_envio;
 
     hEsc = OpenEvent(EVENT_ALL_ACCESS, FALSE, "Esc");
@@ -440,6 +443,8 @@ DWORD WINAPI Thread_Retirada_Mensagens() {
     if (hSwitchRetirada == NULL) {
         printf("ERROR : %d", GetLastError());
     }
+
+    hTimeout = CreateEvent(NULL, FALSE,FALSE, "timeout");
 
     hListaMsg1[0] = hEsc;
     hListaMsg1[1] = hSwitchRetirada;
@@ -476,7 +481,8 @@ DWORD WINAPI Thread_Retirada_Mensagens() {
         if(Lista2Disponivel == TRUE){
             ret = wait_with_unbloqued_check(hListaMsg2, sNomeThread); /* Aguarda estar desbloqueado e com Mutex da lista2 */
             if (ret != 0) break; /* Esc pressionado */
-            if(ListaMsg2.lc->total == MSG_LIMITE){
+            //WaitForSingleObject(hTimeout, 30);
+            if(ListaMsg2.lc->total == 50){
                 printf("Lista 2 cheia\n");
             }
             ReleaseMutex(ListaMsg2.hMutex);
@@ -494,7 +500,7 @@ DWORD WINAPI Thread_Retirada_Mensagens() {
         ListaMsg1.lc->pos_ocupada = (ListaMsg1.lc->pos_ocupada + 1) % MSG_LIMITE;
         ListaMsg1.lc->total--;
         ReleaseMutex(ListaMsg1.hMutex);
-
+       // WaitForSingleObject(hTimeout, 10); /***********************************RETIRAR DEPOIS*******************/
         /* Libera producao */
         ReleaseSemaphore(ListaMsg1.hSemProduzir, 1, NULL);
 
@@ -536,6 +542,7 @@ DWORD WINAPI Thread_Retirada_Mensagens() {
     }
     CloseHandle(hEsc);
     CloseHandle(hSwitchRetirada);
+    CloseHandle(hTimeout);
     printf("Thread Retirada foi finalizada\n");
     return (0);
 }

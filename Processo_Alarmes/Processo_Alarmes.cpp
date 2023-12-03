@@ -61,7 +61,7 @@ DWORD wait_with_unbloqued_check(HANDLE* hEvents, int N, char* threadName);
 
 int main()
 {
-	char sNomeThread[] = "Thread Exibicao de Alarmes";
+	char sNomeThread[] = "Thread de Exibicao de Alarmes";
 	HANDLE hSwitchAlarmes, hEsc, hSemAlarmeCartoes, hSemAlarmeCritico, hEventos[4], hMSCriticos, hMSCartoes;
 	int ret;
 	BOOL MS;
@@ -113,6 +113,7 @@ int main()
 		}
 		if(ret == 3) {
 			MS = ReadFile(hMSCartoes, buf, MSG_TAM_TOT, &bytes, NULL);
+			CheckForError(MS);
 			decode_msg(buf, &msg);
 			printf("%02d:%02d:%02d NSEQ: %05d FALHA NO HARDWARE CLP No %d\n", msg.timestamp.wHour, msg.timestamp.wMinute, msg.timestamp.wSecond, msg.nseq, msg.id);
 		}
@@ -219,10 +220,10 @@ DWORD wait_with_unbloqued_check(HANDLE* hEvents, int N, char* threadName) {
 		ret = ret - WAIT_OBJECT_0;
         if (ret == 0) return 0;
         if (ret == 1) { /* Tecla pressionada */
-            printf("Thread %s Bloqueada\n", threadName);
+            printf("%s Bloqueada\n", threadName);
             ret = WaitForMultipleObjects(2, hEvents, FALSE, INFINITE); /* Aguarda pressionar tecla novamente */
             if (ret == WAIT_OBJECT_0) return 0;
-            printf("Thread %s Desbloqueada\n", threadName);
+            printf("%s Desbloqueada\n", threadName);
         }
 		if(ret >= N){
 			printf("Error while waiting: %d\n", (int) GetLastError());
